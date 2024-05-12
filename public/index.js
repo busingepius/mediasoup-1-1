@@ -61,31 +61,31 @@ const streamSuccess = (stream) => {
 }
 
 const getLocalStream = async () => {
-    // try {
-    //     let mediaStream = await navigator.mediaDevices.getUserMedia({
-    //             audio: false,
-    //             video: {
-    //                 width: {min: 640, max: 720},
-    //                 height: {min: 400, max: 720}
-    //             }
-    //         }
-    //     )
-    //     await streamSuccess(mediaStream);
-    // } catch (error) {
-    //     console.log(error.message);
-    // }
+    try {
+        let mediaStream = await navigator.mediaDevices.getUserMedia({
+                audio: false,
+                video: {
+                    width: {min: 640, max: 720},
+                    height: {min: 400, max: 720}
+                }
+            }
+        )
+        await streamSuccess(mediaStream);
+    } catch (error) {
+        console.log(error.message);
+    }
 
-    // using a call back
-    navigator.mediaDevices.getUserMedia({
-        audio: false,
-        video: {
-            width: {min: 640, max: 1920},
-            height: {min: 400, max: 1080}
-        }
-    }).then(streamSuccess)
-        .catch(error => {
-            console.log(error.message)
-        });
+    // // using a call back
+    // navigator.mediaDevices.getUserMedia({
+    //     audio: false,
+    //     video: {
+    //         width: {min: 640, max: 1920},
+    //         height: {min: 400, max: 1080}
+    //     }
+    // }).then(streamSuccess)
+    //     .catch(error => {
+    //         console.log(error.message)
+    //     });
 }
 
 const goConsume = () => {
