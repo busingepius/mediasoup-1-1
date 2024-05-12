@@ -1,6 +1,7 @@
 #### Adding connection to HTTPS
-
-- ``` openssl req -x509 -newkey rsa:2048 -keyout keytmp.pem -out cert.pem -days 365;```
+ ``` 
+openssl req -x509 -newkey rsa:2048 -keyout keytmp.pem -out cert.pem -days 365;
+```
 - The line above downloads certificates and permissions inorder to connect using https in browser
 
 #### THE OPTIONS
