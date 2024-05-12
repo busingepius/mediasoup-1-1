@@ -8,7 +8,7 @@
 - The options must have a pass phrase or else a decryption error will br produced
 - The passphrase must be the same as the one used to generate the permission files.
 
-```js
+```JS
 const options = {
     key: fs.readFileSync(path.join(__dirname, "./server/ssl/key.pem"), "utf-8"),
     cert: fs.readFileSync(path.join(__dirname, "./server/ssl/cert.pem"), "utf-8"),
@@ -18,14 +18,18 @@ const options = {
 
 #### Import socket.io client side inside the clients javascript
 
-```import { io } from "https://cdn.socket.io/4.4.1/socket.io.esm.min.js"```
+```JS
+   import { io } from "https://cdn.socket.io/4.4.1/socket.io.esm.min.js"
+```
 
 - instead of commonjs
 
 #### Changing how to import packages in nodejs (server-side)
 
 - This line below changes default use of require and enables use of import statement in order to get packages
-  ```"type": "module",```
+```
+ "type": "module",
+```
 
 #### In cases (bundling node package capabilities)
 
@@ -34,18 +38,18 @@ const options = {
 
 - Thus, in the scripts add the following lines
 
-```
+```JSON
     "scripts": {
         "watch": "watchify public/index.js -o public/bundle.js -v"
     }
 ```
 
 - Then open another terminal:
-- ``` npm run watch ```
+``` npm run watch ```
 
 - In the index.js, use the node packages like this
 
-```
+```JS
 const io = require("socket.io-client");
 const mediasoup = require("mediasoup-client");
 ```
@@ -55,7 +59,7 @@ const mediasoup = require("mediasoup-client");
 - Make sure to provide the right ip addresses in order to receive the video streams or else they will not be received
   via the connection e.g.,
 
-```
+```JS
 const webRtcTransport_options = {
             listenIps: [
                 {
@@ -71,7 +75,7 @@ const webRtcTransport_options = {
 
 - After updating the ip addresses the server can be reached on the localhost network as
 
-```agsl
+```JS
 https://localhost:3000/sfu/
 ```
 
