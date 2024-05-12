@@ -77,21 +77,43 @@ const mediaCodecs = [
 
 peers.on("connection", async (socket) => {
     console.log(socket.id);
-    socket.emit("connection-success", {socketId: socket.id});
+    socket.emit("connection-success", {socketId: socket.id, existsProducer: producer ? true : false});
 
     socket.on("disconnect", () => {
         // do some clean up
         console.log("peer disconnected");
     });
 
-    router = await worker.createRouter({mediaCodecs});
+    socket.on("createRoom", async (callback) => {
+        if (router === undefined) {
+            // worker.createRouter(options;
+            // options = {mediaCodecs,appData};
+            // mediaCodecs -> defined above
+            // appData -> custom application data - we are not supplying any
+            // none of the two are required
+            router = await worker.createRouter({mediaCodecs});
+            console.log(`Router ID: ${router.id}`);
+        }
+        getRtpCapabilities(callback);
+    })
 
-    socket.on("getRPTCapabilities", (callback) => {
+    const getRtpCapabilities = (callback)=>{
         const rtpCapabilities = router.rtpCapabilities;
-        console.log("rtp Capabilities", rtpCapabilities);
 
-        callback({rtpCapabilities});
-    });
+        callback(rtpCapabilities);
+    }
+
+    // // todo: i commented out the line below to check router details// plus the lines below were refactored
+    // // router = await worker.createRouter({mediaCodecs});
+    //
+    // // client emits a request for RTP Capabilities
+    // // This event responds to the request
+    // socket.on("getRPTCapabilities", (callback) => {
+    //     const rtpCapabilities = router.rtpCapabilities;
+    //     console.log("rtp Capabilities", rtpCapabilities);
+    //
+    //     callback({rtpCapabilities});
+    // });
 
     socket.on("createWebRtcTransport", async ({sender}, callback) => {
         console.log(`Is this a sender request? ${sender}`);

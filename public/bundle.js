@@ -212,7 +212,7 @@ class Logger {
 }
 exports.Logger = Logger;
 
-},{"debug":6}],3:[function(require,module,exports){
+},{"debug":4}],3:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.AwaitQueue = exports.AwaitQueueRemovedTaskError = exports.AwaitQueueStoppedError = void 0;
@@ -397,6 +397,719 @@ class AwaitQueue {
 exports.AwaitQueue = AwaitQueue;
 
 },{"./Logger":2}],4:[function(require,module,exports){
+(function (process){(function (){
+/* eslint-env browser */
+
+/**
+ * This is the web browser implementation of `debug()`.
+ */
+
+exports.formatArgs = formatArgs;
+exports.save = save;
+exports.load = load;
+exports.useColors = useColors;
+exports.storage = localstorage();
+exports.destroy = (() => {
+	let warned = false;
+
+	return () => {
+		if (!warned) {
+			warned = true;
+			console.warn('Instance method `debug.destroy()` is deprecated and no longer does anything. It will be removed in the next major version of `debug`.');
+		}
+	};
+})();
+
+/**
+ * Colors.
+ */
+
+exports.colors = [
+	'#0000CC',
+	'#0000FF',
+	'#0033CC',
+	'#0033FF',
+	'#0066CC',
+	'#0066FF',
+	'#0099CC',
+	'#0099FF',
+	'#00CC00',
+	'#00CC33',
+	'#00CC66',
+	'#00CC99',
+	'#00CCCC',
+	'#00CCFF',
+	'#3300CC',
+	'#3300FF',
+	'#3333CC',
+	'#3333FF',
+	'#3366CC',
+	'#3366FF',
+	'#3399CC',
+	'#3399FF',
+	'#33CC00',
+	'#33CC33',
+	'#33CC66',
+	'#33CC99',
+	'#33CCCC',
+	'#33CCFF',
+	'#6600CC',
+	'#6600FF',
+	'#6633CC',
+	'#6633FF',
+	'#66CC00',
+	'#66CC33',
+	'#9900CC',
+	'#9900FF',
+	'#9933CC',
+	'#9933FF',
+	'#99CC00',
+	'#99CC33',
+	'#CC0000',
+	'#CC0033',
+	'#CC0066',
+	'#CC0099',
+	'#CC00CC',
+	'#CC00FF',
+	'#CC3300',
+	'#CC3333',
+	'#CC3366',
+	'#CC3399',
+	'#CC33CC',
+	'#CC33FF',
+	'#CC6600',
+	'#CC6633',
+	'#CC9900',
+	'#CC9933',
+	'#CCCC00',
+	'#CCCC33',
+	'#FF0000',
+	'#FF0033',
+	'#FF0066',
+	'#FF0099',
+	'#FF00CC',
+	'#FF00FF',
+	'#FF3300',
+	'#FF3333',
+	'#FF3366',
+	'#FF3399',
+	'#FF33CC',
+	'#FF33FF',
+	'#FF6600',
+	'#FF6633',
+	'#FF9900',
+	'#FF9933',
+	'#FFCC00',
+	'#FFCC33'
+];
+
+/**
+ * Currently only WebKit-based Web Inspectors, Firefox >= v31,
+ * and the Firebug extension (any Firefox version) are known
+ * to support "%c" CSS customizations.
+ *
+ * TODO: add a `localStorage` variable to explicitly enable/disable colors
+ */
+
+// eslint-disable-next-line complexity
+function useColors() {
+	// NB: In an Electron preload script, document will be defined but not fully
+	// initialized. Since we know we're in Chrome, we'll just detect this case
+	// explicitly
+	if (typeof window !== 'undefined' && window.process && (window.process.type === 'renderer' || window.process.__nwjs)) {
+		return true;
+	}
+
+	// Internet Explorer and Edge do not support colors.
+	if (typeof navigator !== 'undefined' && navigator.userAgent && navigator.userAgent.toLowerCase().match(/(edge|trident)\/(\d+)/)) {
+		return false;
+	}
+
+	// Is webkit? http://stackoverflow.com/a/16459606/376773
+	// document is undefined in react-native: https://github.com/facebook/react-native/pull/1632
+	return (typeof document !== 'undefined' && document.documentElement && document.documentElement.style && document.documentElement.style.WebkitAppearance) ||
+		// Is firebug? http://stackoverflow.com/a/398120/376773
+		(typeof window !== 'undefined' && window.console && (window.console.firebug || (window.console.exception && window.console.table))) ||
+		// Is firefox >= v31?
+		// https://developer.mozilla.org/en-US/docs/Tools/Web_Console#Styling_messages
+		(typeof navigator !== 'undefined' && navigator.userAgent && navigator.userAgent.toLowerCase().match(/firefox\/(\d+)/) && parseInt(RegExp.$1, 10) >= 31) ||
+		// Double check webkit in userAgent just in case we are in a worker
+		(typeof navigator !== 'undefined' && navigator.userAgent && navigator.userAgent.toLowerCase().match(/applewebkit\/(\d+)/));
+}
+
+/**
+ * Colorize log arguments if enabled.
+ *
+ * @api public
+ */
+
+function formatArgs(args) {
+	args[0] = (this.useColors ? '%c' : '') +
+		this.namespace +
+		(this.useColors ? ' %c' : ' ') +
+		args[0] +
+		(this.useColors ? '%c ' : ' ') +
+		'+' + module.exports.humanize(this.diff);
+
+	if (!this.useColors) {
+		return;
+	}
+
+	const c = 'color: ' + this.color;
+	args.splice(1, 0, c, 'color: inherit');
+
+	// The final "%c" is somewhat tricky, because there could be other
+	// arguments passed either before or after the %c, so we need to
+	// figure out the correct index to insert the CSS into
+	let index = 0;
+	let lastC = 0;
+	args[0].replace(/%[a-zA-Z%]/g, match => {
+		if (match === '%%') {
+			return;
+		}
+		index++;
+		if (match === '%c') {
+			// We only are interested in the *last* %c
+			// (the user may have provided their own)
+			lastC = index;
+		}
+	});
+
+	args.splice(lastC, 0, c);
+}
+
+/**
+ * Invokes `console.debug()` when available.
+ * No-op when `console.debug` is not a "function".
+ * If `console.debug` is not available, falls back
+ * to `console.log`.
+ *
+ * @api public
+ */
+exports.log = console.debug || console.log || (() => {});
+
+/**
+ * Save `namespaces`.
+ *
+ * @param {String} namespaces
+ * @api private
+ */
+function save(namespaces) {
+	try {
+		if (namespaces) {
+			exports.storage.setItem('debug', namespaces);
+		} else {
+			exports.storage.removeItem('debug');
+		}
+	} catch (error) {
+		// Swallow
+		// XXX (@Qix-) should we be logging these?
+	}
+}
+
+/**
+ * Load `namespaces`.
+ *
+ * @return {String} returns the previously persisted debug modes
+ * @api private
+ */
+function load() {
+	let r;
+	try {
+		r = exports.storage.getItem('debug');
+	} catch (error) {
+		// Swallow
+		// XXX (@Qix-) should we be logging these?
+	}
+
+	// If debug isn't set in LS, and we're in Electron, try to load $DEBUG
+	if (!r && typeof process !== 'undefined' && 'env' in process) {
+		r = process.env.DEBUG;
+	}
+
+	return r;
+}
+
+/**
+ * Localstorage attempts to return the localstorage.
+ *
+ * This is necessary because safari throws
+ * when a user disables cookies/localstorage
+ * and you attempt to access it.
+ *
+ * @return {LocalStorage}
+ * @api private
+ */
+
+function localstorage() {
+	try {
+		// TVMLKit (Apple TV JS Runtime) does not have a window object, just localStorage in the global context
+		// The Browser also has localStorage in the global context.
+		return localStorage;
+	} catch (error) {
+		// Swallow
+		// XXX (@Qix-) should we be logging these?
+	}
+}
+
+module.exports = require('./common')(exports);
+
+const {formatters} = module.exports;
+
+/**
+ * Map %j to `JSON.stringify()`, since no Web Inspectors do that by default.
+ */
+
+formatters.j = function (v) {
+	try {
+		return JSON.stringify(v);
+	} catch (error) {
+		return '[UnexpectedJSONParseError]: ' + error.message;
+	}
+};
+
+}).call(this)}).call(this,require('_process'))
+},{"./common":5,"_process":78}],5:[function(require,module,exports){
+
+/**
+ * This is the common logic for both the Node.js and web browser
+ * implementations of `debug()`.
+ */
+
+function setup(env) {
+	createDebug.debug = createDebug;
+	createDebug.default = createDebug;
+	createDebug.coerce = coerce;
+	createDebug.disable = disable;
+	createDebug.enable = enable;
+	createDebug.enabled = enabled;
+	createDebug.humanize = require('ms');
+	createDebug.destroy = destroy;
+
+	Object.keys(env).forEach(key => {
+		createDebug[key] = env[key];
+	});
+
+	/**
+	* The currently active debug mode names, and names to skip.
+	*/
+
+	createDebug.names = [];
+	createDebug.skips = [];
+
+	/**
+	* Map of special "%n" handling functions, for the debug "format" argument.
+	*
+	* Valid key names are a single, lower or upper-case letter, i.e. "n" and "N".
+	*/
+	createDebug.formatters = {};
+
+	/**
+	* Selects a color for a debug namespace
+	* @param {String} namespace The namespace string for the debug instance to be colored
+	* @return {Number|String} An ANSI color code for the given namespace
+	* @api private
+	*/
+	function selectColor(namespace) {
+		let hash = 0;
+
+		for (let i = 0; i < namespace.length; i++) {
+			hash = ((hash << 5) - hash) + namespace.charCodeAt(i);
+			hash |= 0; // Convert to 32bit integer
+		}
+
+		return createDebug.colors[Math.abs(hash) % createDebug.colors.length];
+	}
+	createDebug.selectColor = selectColor;
+
+	/**
+	* Create a debugger with the given `namespace`.
+	*
+	* @param {String} namespace
+	* @return {Function}
+	* @api public
+	*/
+	function createDebug(namespace) {
+		let prevTime;
+		let enableOverride = null;
+		let namespacesCache;
+		let enabledCache;
+
+		function debug(...args) {
+			// Disabled?
+			if (!debug.enabled) {
+				return;
+			}
+
+			const self = debug;
+
+			// Set `diff` timestamp
+			const curr = Number(new Date());
+			const ms = curr - (prevTime || curr);
+			self.diff = ms;
+			self.prev = prevTime;
+			self.curr = curr;
+			prevTime = curr;
+
+			args[0] = createDebug.coerce(args[0]);
+
+			if (typeof args[0] !== 'string') {
+				// Anything else let's inspect with %O
+				args.unshift('%O');
+			}
+
+			// Apply any `formatters` transformations
+			let index = 0;
+			args[0] = args[0].replace(/%([a-zA-Z%])/g, (match, format) => {
+				// If we encounter an escaped % then don't increase the array index
+				if (match === '%%') {
+					return '%';
+				}
+				index++;
+				const formatter = createDebug.formatters[format];
+				if (typeof formatter === 'function') {
+					const val = args[index];
+					match = formatter.call(self, val);
+
+					// Now we need to remove `args[index]` since it's inlined in the `format`
+					args.splice(index, 1);
+					index--;
+				}
+				return match;
+			});
+
+			// Apply env-specific formatting (colors, etc.)
+			createDebug.formatArgs.call(self, args);
+
+			const logFn = self.log || createDebug.log;
+			logFn.apply(self, args);
+		}
+
+		debug.namespace = namespace;
+		debug.useColors = createDebug.useColors();
+		debug.color = createDebug.selectColor(namespace);
+		debug.extend = extend;
+		debug.destroy = createDebug.destroy; // XXX Temporary. Will be removed in the next major release.
+
+		Object.defineProperty(debug, 'enabled', {
+			enumerable: true,
+			configurable: false,
+			get: () => {
+				if (enableOverride !== null) {
+					return enableOverride;
+				}
+				if (namespacesCache !== createDebug.namespaces) {
+					namespacesCache = createDebug.namespaces;
+					enabledCache = createDebug.enabled(namespace);
+				}
+
+				return enabledCache;
+			},
+			set: v => {
+				enableOverride = v;
+			}
+		});
+
+		// Env-specific initialization logic for debug instances
+		if (typeof createDebug.init === 'function') {
+			createDebug.init(debug);
+		}
+
+		return debug;
+	}
+
+	function extend(namespace, delimiter) {
+		const newDebug = createDebug(this.namespace + (typeof delimiter === 'undefined' ? ':' : delimiter) + namespace);
+		newDebug.log = this.log;
+		return newDebug;
+	}
+
+	/**
+	* Enables a debug mode by namespaces. This can include modes
+	* separated by a colon and wildcards.
+	*
+	* @param {String} namespaces
+	* @api public
+	*/
+	function enable(namespaces) {
+		createDebug.save(namespaces);
+		createDebug.namespaces = namespaces;
+
+		createDebug.names = [];
+		createDebug.skips = [];
+
+		let i;
+		const split = (typeof namespaces === 'string' ? namespaces : '').split(/[\s,]+/);
+		const len = split.length;
+
+		for (i = 0; i < len; i++) {
+			if (!split[i]) {
+				// ignore empty strings
+				continue;
+			}
+
+			namespaces = split[i].replace(/\*/g, '.*?');
+
+			if (namespaces[0] === '-') {
+				createDebug.skips.push(new RegExp('^' + namespaces.slice(1) + '$'));
+			} else {
+				createDebug.names.push(new RegExp('^' + namespaces + '$'));
+			}
+		}
+	}
+
+	/**
+	* Disable debug output.
+	*
+	* @return {String} namespaces
+	* @api public
+	*/
+	function disable() {
+		const namespaces = [
+			...createDebug.names.map(toNamespace),
+			...createDebug.skips.map(toNamespace).map(namespace => '-' + namespace)
+		].join(',');
+		createDebug.enable('');
+		return namespaces;
+	}
+
+	/**
+	* Returns true if the given mode name is enabled, false otherwise.
+	*
+	* @param {String} name
+	* @return {Boolean}
+	* @api public
+	*/
+	function enabled(name) {
+		if (name[name.length - 1] === '*') {
+			return true;
+		}
+
+		let i;
+		let len;
+
+		for (i = 0, len = createDebug.skips.length; i < len; i++) {
+			if (createDebug.skips[i].test(name)) {
+				return false;
+			}
+		}
+
+		for (i = 0, len = createDebug.names.length; i < len; i++) {
+			if (createDebug.names[i].test(name)) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	/**
+	* Convert regexp to namespace
+	*
+	* @param {RegExp} regxep
+	* @return {String} namespace
+	* @api private
+	*/
+	function toNamespace(regexp) {
+		return regexp.toString()
+			.substring(2, regexp.toString().length - 2)
+			.replace(/\.\*\?$/, '*');
+	}
+
+	/**
+	* Coerce `val`.
+	*
+	* @param {Mixed} val
+	* @return {Mixed}
+	* @api private
+	*/
+	function coerce(val) {
+		if (val instanceof Error) {
+			return val.stack || val.message;
+		}
+		return val;
+	}
+
+	/**
+	* XXX DO NOT USE. This is a temporary stub function.
+	* XXX It WILL be removed in the next major release.
+	*/
+	function destroy() {
+		console.warn('Instance method `debug.destroy()` is deprecated and no longer does anything. It will be removed in the next major version of `debug`.');
+	}
+
+	createDebug.enable(createDebug.load());
+
+	return createDebug;
+}
+
+module.exports = setup;
+
+},{"ms":6}],6:[function(require,module,exports){
+/**
+ * Helpers.
+ */
+
+var s = 1000;
+var m = s * 60;
+var h = m * 60;
+var d = h * 24;
+var w = d * 7;
+var y = d * 365.25;
+
+/**
+ * Parse or format the given `val`.
+ *
+ * Options:
+ *
+ *  - `long` verbose formatting [false]
+ *
+ * @param {String|Number} val
+ * @param {Object} [options]
+ * @throws {Error} throw an error if val is not a non-empty string or a number
+ * @return {String|Number}
+ * @api public
+ */
+
+module.exports = function(val, options) {
+  options = options || {};
+  var type = typeof val;
+  if (type === 'string' && val.length > 0) {
+    return parse(val);
+  } else if (type === 'number' && isFinite(val)) {
+    return options.long ? fmtLong(val) : fmtShort(val);
+  }
+  throw new Error(
+    'val is not a non-empty string or a valid number. val=' +
+      JSON.stringify(val)
+  );
+};
+
+/**
+ * Parse the given `str` and return milliseconds.
+ *
+ * @param {String} str
+ * @return {Number}
+ * @api private
+ */
+
+function parse(str) {
+  str = String(str);
+  if (str.length > 100) {
+    return;
+  }
+  var match = /^(-?(?:\d+)?\.?\d+) *(milliseconds?|msecs?|ms|seconds?|secs?|s|minutes?|mins?|m|hours?|hrs?|h|days?|d|weeks?|w|years?|yrs?|y)?$/i.exec(
+    str
+  );
+  if (!match) {
+    return;
+  }
+  var n = parseFloat(match[1]);
+  var type = (match[2] || 'ms').toLowerCase();
+  switch (type) {
+    case 'years':
+    case 'year':
+    case 'yrs':
+    case 'yr':
+    case 'y':
+      return n * y;
+    case 'weeks':
+    case 'week':
+    case 'w':
+      return n * w;
+    case 'days':
+    case 'day':
+    case 'd':
+      return n * d;
+    case 'hours':
+    case 'hour':
+    case 'hrs':
+    case 'hr':
+    case 'h':
+      return n * h;
+    case 'minutes':
+    case 'minute':
+    case 'mins':
+    case 'min':
+    case 'm':
+      return n * m;
+    case 'seconds':
+    case 'second':
+    case 'secs':
+    case 'sec':
+    case 's':
+      return n * s;
+    case 'milliseconds':
+    case 'millisecond':
+    case 'msecs':
+    case 'msec':
+    case 'ms':
+      return n;
+    default:
+      return undefined;
+  }
+}
+
+/**
+ * Short format for `ms`.
+ *
+ * @param {Number} ms
+ * @return {String}
+ * @api private
+ */
+
+function fmtShort(ms) {
+  var msAbs = Math.abs(ms);
+  if (msAbs >= d) {
+    return Math.round(ms / d) + 'd';
+  }
+  if (msAbs >= h) {
+    return Math.round(ms / h) + 'h';
+  }
+  if (msAbs >= m) {
+    return Math.round(ms / m) + 'm';
+  }
+  if (msAbs >= s) {
+    return Math.round(ms / s) + 's';
+  }
+  return ms + 'ms';
+}
+
+/**
+ * Long format for `ms`.
+ *
+ * @param {Number} ms
+ * @return {String}
+ * @api private
+ */
+
+function fmtLong(ms) {
+  var msAbs = Math.abs(ms);
+  if (msAbs >= d) {
+    return plural(ms, msAbs, d, 'day');
+  }
+  if (msAbs >= h) {
+    return plural(ms, msAbs, h, 'hour');
+  }
+  if (msAbs >= m) {
+    return plural(ms, msAbs, m, 'minute');
+  }
+  if (msAbs >= s) {
+    return plural(ms, msAbs, s, 'second');
+  }
+  return ms + ' ms';
+}
+
+/**
+ * Pluralization helper.
+ */
+
+function plural(ms, msAbs, n, name) {
+  var isPlural = msAbs >= n * 1.5;
+  return Math.round(ms / n) + ' ' + name + (isPlural ? 's' : '');
+}
+
+},{}],7:[function(require,module,exports){
 'use strict'
 
 exports.byteLength = byteLength
@@ -548,7 +1261,7 @@ function fromByteArray (uint8) {
   return parts.join('')
 }
 
-},{}],5:[function(require,module,exports){
+},{}],8:[function(require,module,exports){
 (function (Buffer){(function (){
 /*!
  * The buffer module from node.js, for the browser.
@@ -2329,556 +3042,7 @@ function numberIsNaN (obj) {
 }
 
 }).call(this)}).call(this,require("buffer").Buffer)
-},{"base64-js":4,"buffer":5,"ieee754":31}],6:[function(require,module,exports){
-(function (process){(function (){
-/* eslint-env browser */
-
-/**
- * This is the web browser implementation of `debug()`.
- */
-
-exports.formatArgs = formatArgs;
-exports.save = save;
-exports.load = load;
-exports.useColors = useColors;
-exports.storage = localstorage();
-exports.destroy = (() => {
-	let warned = false;
-
-	return () => {
-		if (!warned) {
-			warned = true;
-			console.warn('Instance method `debug.destroy()` is deprecated and no longer does anything. It will be removed in the next major version of `debug`.');
-		}
-	};
-})();
-
-/**
- * Colors.
- */
-
-exports.colors = [
-	'#0000CC',
-	'#0000FF',
-	'#0033CC',
-	'#0033FF',
-	'#0066CC',
-	'#0066FF',
-	'#0099CC',
-	'#0099FF',
-	'#00CC00',
-	'#00CC33',
-	'#00CC66',
-	'#00CC99',
-	'#00CCCC',
-	'#00CCFF',
-	'#3300CC',
-	'#3300FF',
-	'#3333CC',
-	'#3333FF',
-	'#3366CC',
-	'#3366FF',
-	'#3399CC',
-	'#3399FF',
-	'#33CC00',
-	'#33CC33',
-	'#33CC66',
-	'#33CC99',
-	'#33CCCC',
-	'#33CCFF',
-	'#6600CC',
-	'#6600FF',
-	'#6633CC',
-	'#6633FF',
-	'#66CC00',
-	'#66CC33',
-	'#9900CC',
-	'#9900FF',
-	'#9933CC',
-	'#9933FF',
-	'#99CC00',
-	'#99CC33',
-	'#CC0000',
-	'#CC0033',
-	'#CC0066',
-	'#CC0099',
-	'#CC00CC',
-	'#CC00FF',
-	'#CC3300',
-	'#CC3333',
-	'#CC3366',
-	'#CC3399',
-	'#CC33CC',
-	'#CC33FF',
-	'#CC6600',
-	'#CC6633',
-	'#CC9900',
-	'#CC9933',
-	'#CCCC00',
-	'#CCCC33',
-	'#FF0000',
-	'#FF0033',
-	'#FF0066',
-	'#FF0099',
-	'#FF00CC',
-	'#FF00FF',
-	'#FF3300',
-	'#FF3333',
-	'#FF3366',
-	'#FF3399',
-	'#FF33CC',
-	'#FF33FF',
-	'#FF6600',
-	'#FF6633',
-	'#FF9900',
-	'#FF9933',
-	'#FFCC00',
-	'#FFCC33'
-];
-
-/**
- * Currently only WebKit-based Web Inspectors, Firefox >= v31,
- * and the Firebug extension (any Firefox version) are known
- * to support "%c" CSS customizations.
- *
- * TODO: add a `localStorage` variable to explicitly enable/disable colors
- */
-
-// eslint-disable-next-line complexity
-function useColors() {
-	// NB: In an Electron preload script, document will be defined but not fully
-	// initialized. Since we know we're in Chrome, we'll just detect this case
-	// explicitly
-	if (typeof window !== 'undefined' && window.process && (window.process.type === 'renderer' || window.process.__nwjs)) {
-		return true;
-	}
-
-	// Internet Explorer and Edge do not support colors.
-	if (typeof navigator !== 'undefined' && navigator.userAgent && navigator.userAgent.toLowerCase().match(/(edge|trident)\/(\d+)/)) {
-		return false;
-	}
-
-	// Is webkit? http://stackoverflow.com/a/16459606/376773
-	// document is undefined in react-native: https://github.com/facebook/react-native/pull/1632
-	return (typeof document !== 'undefined' && document.documentElement && document.documentElement.style && document.documentElement.style.WebkitAppearance) ||
-		// Is firebug? http://stackoverflow.com/a/398120/376773
-		(typeof window !== 'undefined' && window.console && (window.console.firebug || (window.console.exception && window.console.table))) ||
-		// Is firefox >= v31?
-		// https://developer.mozilla.org/en-US/docs/Tools/Web_Console#Styling_messages
-		(typeof navigator !== 'undefined' && navigator.userAgent && navigator.userAgent.toLowerCase().match(/firefox\/(\d+)/) && parseInt(RegExp.$1, 10) >= 31) ||
-		// Double check webkit in userAgent just in case we are in a worker
-		(typeof navigator !== 'undefined' && navigator.userAgent && navigator.userAgent.toLowerCase().match(/applewebkit\/(\d+)/));
-}
-
-/**
- * Colorize log arguments if enabled.
- *
- * @api public
- */
-
-function formatArgs(args) {
-	args[0] = (this.useColors ? '%c' : '') +
-		this.namespace +
-		(this.useColors ? ' %c' : ' ') +
-		args[0] +
-		(this.useColors ? '%c ' : ' ') +
-		'+' + module.exports.humanize(this.diff);
-
-	if (!this.useColors) {
-		return;
-	}
-
-	const c = 'color: ' + this.color;
-	args.splice(1, 0, c, 'color: inherit');
-
-	// The final "%c" is somewhat tricky, because there could be other
-	// arguments passed either before or after the %c, so we need to
-	// figure out the correct index to insert the CSS into
-	let index = 0;
-	let lastC = 0;
-	args[0].replace(/%[a-zA-Z%]/g, match => {
-		if (match === '%%') {
-			return;
-		}
-		index++;
-		if (match === '%c') {
-			// We only are interested in the *last* %c
-			// (the user may have provided their own)
-			lastC = index;
-		}
-	});
-
-	args.splice(lastC, 0, c);
-}
-
-/**
- * Invokes `console.debug()` when available.
- * No-op when `console.debug` is not a "function".
- * If `console.debug` is not available, falls back
- * to `console.log`.
- *
- * @api public
- */
-exports.log = console.debug || console.log || (() => {});
-
-/**
- * Save `namespaces`.
- *
- * @param {String} namespaces
- * @api private
- */
-function save(namespaces) {
-	try {
-		if (namespaces) {
-			exports.storage.setItem('debug', namespaces);
-		} else {
-			exports.storage.removeItem('debug');
-		}
-	} catch (error) {
-		// Swallow
-		// XXX (@Qix-) should we be logging these?
-	}
-}
-
-/**
- * Load `namespaces`.
- *
- * @return {String} returns the previously persisted debug modes
- * @api private
- */
-function load() {
-	let r;
-	try {
-		r = exports.storage.getItem('debug');
-	} catch (error) {
-		// Swallow
-		// XXX (@Qix-) should we be logging these?
-	}
-
-	// If debug isn't set in LS, and we're in Electron, try to load $DEBUG
-	if (!r && typeof process !== 'undefined' && 'env' in process) {
-		r = process.env.DEBUG;
-	}
-
-	return r;
-}
-
-/**
- * Localstorage attempts to return the localstorage.
- *
- * This is necessary because safari throws
- * when a user disables cookies/localstorage
- * and you attempt to access it.
- *
- * @return {LocalStorage}
- * @api private
- */
-
-function localstorage() {
-	try {
-		// TVMLKit (Apple TV JS Runtime) does not have a window object, just localStorage in the global context
-		// The Browser also has localStorage in the global context.
-		return localStorage;
-	} catch (error) {
-		// Swallow
-		// XXX (@Qix-) should we be logging these?
-	}
-}
-
-module.exports = require('./common')(exports);
-
-const {formatters} = module.exports;
-
-/**
- * Map %j to `JSON.stringify()`, since no Web Inspectors do that by default.
- */
-
-formatters.j = function (v) {
-	try {
-		return JSON.stringify(v);
-	} catch (error) {
-		return '[UnexpectedJSONParseError]: ' + error.message;
-	}
-};
-
-}).call(this)}).call(this,require('_process'))
-},{"./common":7,"_process":69}],7:[function(require,module,exports){
-
-/**
- * This is the common logic for both the Node.js and web browser
- * implementations of `debug()`.
- */
-
-function setup(env) {
-	createDebug.debug = createDebug;
-	createDebug.default = createDebug;
-	createDebug.coerce = coerce;
-	createDebug.disable = disable;
-	createDebug.enable = enable;
-	createDebug.enabled = enabled;
-	createDebug.humanize = require('ms');
-	createDebug.destroy = destroy;
-
-	Object.keys(env).forEach(key => {
-		createDebug[key] = env[key];
-	});
-
-	/**
-	* The currently active debug mode names, and names to skip.
-	*/
-
-	createDebug.names = [];
-	createDebug.skips = [];
-
-	/**
-	* Map of special "%n" handling functions, for the debug "format" argument.
-	*
-	* Valid key names are a single, lower or upper-case letter, i.e. "n" and "N".
-	*/
-	createDebug.formatters = {};
-
-	/**
-	* Selects a color for a debug namespace
-	* @param {String} namespace The namespace string for the debug instance to be colored
-	* @return {Number|String} An ANSI color code for the given namespace
-	* @api private
-	*/
-	function selectColor(namespace) {
-		let hash = 0;
-
-		for (let i = 0; i < namespace.length; i++) {
-			hash = ((hash << 5) - hash) + namespace.charCodeAt(i);
-			hash |= 0; // Convert to 32bit integer
-		}
-
-		return createDebug.colors[Math.abs(hash) % createDebug.colors.length];
-	}
-	createDebug.selectColor = selectColor;
-
-	/**
-	* Create a debugger with the given `namespace`.
-	*
-	* @param {String} namespace
-	* @return {Function}
-	* @api public
-	*/
-	function createDebug(namespace) {
-		let prevTime;
-		let enableOverride = null;
-		let namespacesCache;
-		let enabledCache;
-
-		function debug(...args) {
-			// Disabled?
-			if (!debug.enabled) {
-				return;
-			}
-
-			const self = debug;
-
-			// Set `diff` timestamp
-			const curr = Number(new Date());
-			const ms = curr - (prevTime || curr);
-			self.diff = ms;
-			self.prev = prevTime;
-			self.curr = curr;
-			prevTime = curr;
-
-			args[0] = createDebug.coerce(args[0]);
-
-			if (typeof args[0] !== 'string') {
-				// Anything else let's inspect with %O
-				args.unshift('%O');
-			}
-
-			// Apply any `formatters` transformations
-			let index = 0;
-			args[0] = args[0].replace(/%([a-zA-Z%])/g, (match, format) => {
-				// If we encounter an escaped % then don't increase the array index
-				if (match === '%%') {
-					return '%';
-				}
-				index++;
-				const formatter = createDebug.formatters[format];
-				if (typeof formatter === 'function') {
-					const val = args[index];
-					match = formatter.call(self, val);
-
-					// Now we need to remove `args[index]` since it's inlined in the `format`
-					args.splice(index, 1);
-					index--;
-				}
-				return match;
-			});
-
-			// Apply env-specific formatting (colors, etc.)
-			createDebug.formatArgs.call(self, args);
-
-			const logFn = self.log || createDebug.log;
-			logFn.apply(self, args);
-		}
-
-		debug.namespace = namespace;
-		debug.useColors = createDebug.useColors();
-		debug.color = createDebug.selectColor(namespace);
-		debug.extend = extend;
-		debug.destroy = createDebug.destroy; // XXX Temporary. Will be removed in the next major release.
-
-		Object.defineProperty(debug, 'enabled', {
-			enumerable: true,
-			configurable: false,
-			get: () => {
-				if (enableOverride !== null) {
-					return enableOverride;
-				}
-				if (namespacesCache !== createDebug.namespaces) {
-					namespacesCache = createDebug.namespaces;
-					enabledCache = createDebug.enabled(namespace);
-				}
-
-				return enabledCache;
-			},
-			set: v => {
-				enableOverride = v;
-			}
-		});
-
-		// Env-specific initialization logic for debug instances
-		if (typeof createDebug.init === 'function') {
-			createDebug.init(debug);
-		}
-
-		return debug;
-	}
-
-	function extend(namespace, delimiter) {
-		const newDebug = createDebug(this.namespace + (typeof delimiter === 'undefined' ? ':' : delimiter) + namespace);
-		newDebug.log = this.log;
-		return newDebug;
-	}
-
-	/**
-	* Enables a debug mode by namespaces. This can include modes
-	* separated by a colon and wildcards.
-	*
-	* @param {String} namespaces
-	* @api public
-	*/
-	function enable(namespaces) {
-		createDebug.save(namespaces);
-		createDebug.namespaces = namespaces;
-
-		createDebug.names = [];
-		createDebug.skips = [];
-
-		let i;
-		const split = (typeof namespaces === 'string' ? namespaces : '').split(/[\s,]+/);
-		const len = split.length;
-
-		for (i = 0; i < len; i++) {
-			if (!split[i]) {
-				// ignore empty strings
-				continue;
-			}
-
-			namespaces = split[i].replace(/\*/g, '.*?');
-
-			if (namespaces[0] === '-') {
-				createDebug.skips.push(new RegExp('^' + namespaces.slice(1) + '$'));
-			} else {
-				createDebug.names.push(new RegExp('^' + namespaces + '$'));
-			}
-		}
-	}
-
-	/**
-	* Disable debug output.
-	*
-	* @return {String} namespaces
-	* @api public
-	*/
-	function disable() {
-		const namespaces = [
-			...createDebug.names.map(toNamespace),
-			...createDebug.skips.map(toNamespace).map(namespace => '-' + namespace)
-		].join(',');
-		createDebug.enable('');
-		return namespaces;
-	}
-
-	/**
-	* Returns true if the given mode name is enabled, false otherwise.
-	*
-	* @param {String} name
-	* @return {Boolean}
-	* @api public
-	*/
-	function enabled(name) {
-		if (name[name.length - 1] === '*') {
-			return true;
-		}
-
-		let i;
-		let len;
-
-		for (i = 0, len = createDebug.skips.length; i < len; i++) {
-			if (createDebug.skips[i].test(name)) {
-				return false;
-			}
-		}
-
-		for (i = 0, len = createDebug.names.length; i < len; i++) {
-			if (createDebug.names[i].test(name)) {
-				return true;
-			}
-		}
-
-		return false;
-	}
-
-	/**
-	* Convert regexp to namespace
-	*
-	* @param {RegExp} regxep
-	* @return {String} namespace
-	* @api private
-	*/
-	function toNamespace(regexp) {
-		return regexp.toString()
-			.substring(2, regexp.toString().length - 2)
-			.replace(/\.\*\?$/, '*');
-	}
-
-	/**
-	* Coerce `val`.
-	*
-	* @param {Mixed} val
-	* @return {Mixed}
-	* @api private
-	*/
-	function coerce(val) {
-		if (val instanceof Error) {
-			return val.stack || val.message;
-		}
-		return val;
-	}
-
-	/**
-	* XXX DO NOT USE. This is a temporary stub function.
-	* XXX It WILL be removed in the next major release.
-	*/
-	function destroy() {
-		console.warn('Instance method `debug.destroy()` is deprecated and no longer does anything. It will be removed in the next major version of `debug`.');
-	}
-
-	createDebug.enable(createDebug.load());
-
-	return createDebug;
-}
-
-module.exports = setup;
-
-},{"ms":68}],8:[function(require,module,exports){
+},{"base64-js":7,"buffer":8,"ieee754":38}],9:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.hasCORS = void 0;
@@ -2894,7 +3058,7 @@ catch (err) {
 }
 exports.hasCORS = value;
 
-},{}],9:[function(require,module,exports){
+},{}],10:[function(require,module,exports){
 "use strict";
 // imported from https://github.com/galkn/querystring
 /**
@@ -2935,7 +3099,7 @@ function decode(qs) {
 }
 exports.decode = decode;
 
-},{}],10:[function(require,module,exports){
+},{}],11:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.parse = void 0;
@@ -3005,7 +3169,7 @@ function queryKey(uri, query) {
     return data;
 }
 
-},{}],11:[function(require,module,exports){
+},{}],12:[function(require,module,exports){
 // imported from https://github.com/unshiftio/yeast
 'use strict';
 Object.defineProperty(exports, "__esModule", { value: true });
@@ -3062,7 +3226,7 @@ exports.yeast = yeast;
 for (; i < length; i++)
     map[alphabet[i]] = i;
 
-},{}],12:[function(require,module,exports){
+},{}],13:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.globalThisShim = void 0;
@@ -3078,7 +3242,7 @@ exports.globalThisShim = (() => {
     }
 })();
 
-},{}],13:[function(require,module,exports){
+},{}],14:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.nextTick = exports.parse = exports.installTimerFunctions = exports.transports = exports.TransportError = exports.Transport = exports.protocol = exports.Socket = void 0;
@@ -3097,7 +3261,7 @@ Object.defineProperty(exports, "parse", { enumerable: true, get: function () { r
 var websocket_constructor_js_1 = require("./transports/websocket-constructor.js");
 Object.defineProperty(exports, "nextTick", { enumerable: true, get: function () { return websocket_constructor_js_1.nextTick; } });
 
-},{"./contrib/parseuri.js":10,"./socket.js":14,"./transport.js":15,"./transports/index.js":16,"./transports/websocket-constructor.js":18,"./util.js":22}],14:[function(require,module,exports){
+},{"./contrib/parseuri.js":11,"./socket.js":15,"./transport.js":16,"./transports/index.js":17,"./transports/websocket-constructor.js":19,"./util.js":23}],15:[function(require,module,exports){
 "use strict";
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
@@ -3725,7 +3889,7 @@ class Socket extends component_emitter_1.Emitter {
 exports.Socket = Socket;
 Socket.protocol = engine_io_parser_1.protocol;
 
-},{"./contrib/parseqs.js":9,"./contrib/parseuri.js":10,"./transports/index.js":16,"./transports/websocket-constructor.js":18,"./util.js":22,"@socket.io/component-emitter":1,"debug":6,"engine.io-parser":27}],15:[function(require,module,exports){
+},{"./contrib/parseqs.js":10,"./contrib/parseuri.js":11,"./transports/index.js":17,"./transports/websocket-constructor.js":19,"./util.js":23,"@socket.io/component-emitter":1,"debug":24,"engine.io-parser":31}],16:[function(require,module,exports){
 "use strict";
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
@@ -3879,7 +4043,7 @@ class Transport extends component_emitter_1.Emitter {
 }
 exports.Transport = Transport;
 
-},{"./contrib/parseqs.js":9,"./util.js":22,"@socket.io/component-emitter":1,"debug":6,"engine.io-parser":27}],16:[function(require,module,exports){
+},{"./contrib/parseqs.js":10,"./util.js":23,"@socket.io/component-emitter":1,"debug":24,"engine.io-parser":31}],17:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.transports = void 0;
@@ -3892,7 +4056,7 @@ exports.transports = {
     polling: polling_js_1.Polling,
 };
 
-},{"./polling.js":17,"./websocket.js":19,"./webtransport.js":20}],17:[function(require,module,exports){
+},{"./polling.js":18,"./websocket.js":20,"./webtransport.js":21}],18:[function(require,module,exports){
 "use strict";
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
@@ -4308,7 +4472,7 @@ function unloadHandler() {
     }
 }
 
-},{"../contrib/yeast.js":11,"../globalThis.js":12,"../transport.js":15,"../util.js":22,"./xmlhttprequest.js":21,"@socket.io/component-emitter":1,"debug":6,"engine.io-parser":27}],18:[function(require,module,exports){
+},{"../contrib/yeast.js":12,"../globalThis.js":13,"../transport.js":16,"../util.js":23,"./xmlhttprequest.js":22,"@socket.io/component-emitter":1,"debug":24,"engine.io-parser":31}],19:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.defaultBinaryType = exports.usingBrowserWebSocket = exports.WebSocket = exports.nextTick = void 0;
@@ -4326,7 +4490,7 @@ exports.WebSocket = globalThis_js_1.globalThisShim.WebSocket || globalThis_js_1.
 exports.usingBrowserWebSocket = true;
 exports.defaultBinaryType = "arraybuffer";
 
-},{"../globalThis.js":12}],19:[function(require,module,exports){
+},{"../globalThis.js":13}],20:[function(require,module,exports){
 (function (Buffer){(function (){
 "use strict";
 var __importDefault = (this && this.__importDefault) || function (mod) {
@@ -4492,7 +4656,7 @@ class WS extends transport_js_1.Transport {
 exports.WS = WS;
 
 }).call(this)}).call(this,require("buffer").Buffer)
-},{"../contrib/yeast.js":11,"../transport.js":15,"../util.js":22,"./websocket-constructor.js":18,"buffer":5,"debug":6,"engine.io-parser":27}],20:[function(require,module,exports){
+},{"../contrib/yeast.js":12,"../transport.js":16,"../util.js":23,"./websocket-constructor.js":19,"buffer":8,"debug":24,"engine.io-parser":31}],21:[function(require,module,exports){
 "use strict";
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
@@ -4579,7 +4743,7 @@ class WT extends transport_js_1.Transport {
 }
 exports.WT = WT;
 
-},{"../transport.js":15,"./websocket-constructor.js":18,"debug":6,"engine.io-parser":27}],21:[function(require,module,exports){
+},{"../transport.js":16,"./websocket-constructor.js":19,"debug":24,"engine.io-parser":31}],22:[function(require,module,exports){
 "use strict";
 // browser shim for xmlhttprequest module
 Object.defineProperty(exports, "__esModule", { value: true });
@@ -4606,7 +4770,7 @@ exports.XHR = XHR;
 function createCookieJar() { }
 exports.createCookieJar = createCookieJar;
 
-},{"../contrib/has-cors.js":8,"../globalThis.js":12}],22:[function(require,module,exports){
+},{"../contrib/has-cors.js":9,"../globalThis.js":13}],23:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.byteLength = exports.installTimerFunctions = exports.pick = void 0;
@@ -4666,7 +4830,13 @@ function utf8Length(str) {
     return length;
 }
 
-},{"./globalThis.js":12}],23:[function(require,module,exports){
+},{"./globalThis.js":13}],24:[function(require,module,exports){
+arguments[4][4][0].apply(exports,arguments)
+},{"./common":25,"_process":78,"dup":4}],25:[function(require,module,exports){
+arguments[4][5][0].apply(exports,arguments)
+},{"dup":5,"ms":26}],26:[function(require,module,exports){
+arguments[4][6][0].apply(exports,arguments)
+},{"dup":6}],27:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ERROR_PACKET = exports.PACKET_TYPES_REVERSE = exports.PACKET_TYPES = void 0;
@@ -4687,7 +4857,7 @@ Object.keys(PACKET_TYPES).forEach((key) => {
 const ERROR_PACKET = { type: "error", data: "parser error" };
 exports.ERROR_PACKET = ERROR_PACKET;
 
-},{}],24:[function(require,module,exports){
+},{}],28:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.decode = exports.encode = void 0;
@@ -4737,7 +4907,7 @@ const decode = (base64) => {
 };
 exports.decode = decode;
 
-},{}],25:[function(require,module,exports){
+},{}],29:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.decodePacket = void 0;
@@ -4805,7 +4975,7 @@ const mapBinary = (data, binaryType) => {
     }
 };
 
-},{"./commons.js":23,"./contrib/base64-arraybuffer.js":24}],26:[function(require,module,exports){
+},{"./commons.js":27,"./contrib/base64-arraybuffer.js":28}],30:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.encodePacket = exports.encodePacketToBinary = void 0;
@@ -4879,7 +5049,7 @@ function encodePacketToBinary(packet, callback) {
 }
 exports.encodePacketToBinary = encodePacketToBinary;
 
-},{"./commons.js":23}],27:[function(require,module,exports){
+},{"./commons.js":27}],31:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.decodePayload = exports.decodePacket = exports.encodePayload = exports.encodePacket = exports.protocol = exports.createPacketDecoderStream = exports.createPacketEncoderStream = void 0;
@@ -5047,7 +5217,7 @@ function createPacketDecoderStream(maxPayload, binaryType) {
 exports.createPacketDecoderStream = createPacketDecoderStream;
 exports.protocol = 4;
 
-},{"./commons.js":23,"./decodePacket.js":25,"./encodePacket.js":26}],28:[function(require,module,exports){
+},{"./commons.js":27,"./decodePacket.js":29,"./encodePacket.js":30}],32:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -5546,7 +5716,7 @@ function eventTargetAgnosticAddListener(emitter, name, listener, flags) {
   }
 }
 
-},{}],29:[function(require,module,exports){
+},{}],33:[function(require,module,exports){
 "use strict";
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
@@ -5585,7 +5755,7 @@ class Logger {
 }
 exports.Logger = Logger;
 
-},{"debug":6}],30:[function(require,module,exports){
+},{"debug":35}],34:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.generateProfileLevelIdStringForAnswer = exports.isSameProfile = exports.parseSdpProfileLevelId = exports.levelToString = exports.profileToString = exports.profileLevelIdToString = exports.parseProfileLevelId = exports.ProfileLevelId = exports.Level = exports.Profile = void 0;
@@ -6061,7 +6231,13 @@ function isLevelAsymmetryAllowed(params = {}) {
         level_asymmetry_allowed === '1');
 }
 
-},{"./Logger":29}],31:[function(require,module,exports){
+},{"./Logger":33}],35:[function(require,module,exports){
+arguments[4][4][0].apply(exports,arguments)
+},{"./common":36,"_process":78,"dup":4}],36:[function(require,module,exports){
+arguments[4][5][0].apply(exports,arguments)
+},{"dup":5,"ms":37}],37:[function(require,module,exports){
+arguments[4][6][0].apply(exports,arguments)
+},{"dup":6}],38:[function(require,module,exports){
 /*! ieee754. BSD-3-Clause License. Feross Aboukhadijeh <https://feross.org/opensource> */
 exports.read = function (buffer, offset, isLE, mLen, nBytes) {
   var e, m
@@ -6148,7 +6324,7 @@ exports.write = function (buffer, value, offset, isLE, mLen, nBytes) {
   buffer[offset + i - d] |= s * 128
 }
 
-},{}],32:[function(require,module,exports){
+},{}],39:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.Consumer = void 0;
@@ -6340,7 +6516,7 @@ class Consumer extends EnhancedEventEmitter_1.EnhancedEventEmitter {
 }
 exports.Consumer = Consumer;
 
-},{"./EnhancedEventEmitter":36,"./Logger":37,"./errors":42}],33:[function(require,module,exports){
+},{"./EnhancedEventEmitter":43,"./Logger":44,"./errors":49}],40:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.DataConsumer = void 0;
@@ -6504,7 +6680,7 @@ class DataConsumer extends EnhancedEventEmitter_1.EnhancedEventEmitter {
 }
 exports.DataConsumer = DataConsumer;
 
-},{"./EnhancedEventEmitter":36,"./Logger":37}],34:[function(require,module,exports){
+},{"./EnhancedEventEmitter":43,"./Logger":44}],41:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.DataProducer = void 0;
@@ -6686,7 +6862,7 @@ class DataProducer extends EnhancedEventEmitter_1.EnhancedEventEmitter {
 }
 exports.DataProducer = DataProducer;
 
-},{"./EnhancedEventEmitter":36,"./Logger":37,"./errors":42}],35:[function(require,module,exports){
+},{"./EnhancedEventEmitter":43,"./Logger":44,"./errors":49}],42:[function(require,module,exports){
 "use strict";
 var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
     if (k2 === undefined) k2 = k;
@@ -7167,7 +7343,7 @@ class Device {
 }
 exports.Device = Device;
 
-},{"./EnhancedEventEmitter":36,"./Logger":37,"./Transport":41,"./errors":42,"./handlers/Chrome111":43,"./handlers/Chrome55":44,"./handlers/Chrome67":45,"./handlers/Chrome70":46,"./handlers/Chrome74":47,"./handlers/Edge11":48,"./handlers/Firefox120":49,"./handlers/Firefox60":50,"./handlers/ReactNative":52,"./handlers/ReactNativeUnifiedPlan":53,"./handlers/Safari11":54,"./handlers/Safari12":55,"./ortc":64,"./utils":67,"ua-parser-js":84}],36:[function(require,module,exports){
+},{"./EnhancedEventEmitter":43,"./Logger":44,"./Transport":48,"./errors":49,"./handlers/Chrome111":50,"./handlers/Chrome55":51,"./handlers/Chrome67":52,"./handlers/Chrome70":53,"./handlers/Chrome74":54,"./handlers/Edge11":55,"./handlers/Firefox120":56,"./handlers/Firefox60":57,"./handlers/ReactNative":59,"./handlers/ReactNativeUnifiedPlan":60,"./handlers/Safari11":61,"./handlers/Safari12":62,"./ortc":71,"./utils":74,"ua-parser-js":99}],43:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.EnhancedEventEmitter = void 0;
@@ -7239,7 +7415,7 @@ class EnhancedEventEmitter extends events_1.EventEmitter {
 }
 exports.EnhancedEventEmitter = EnhancedEventEmitter;
 
-},{"./Logger":37,"events":28}],37:[function(require,module,exports){
+},{"./Logger":44,"events":32}],44:[function(require,module,exports){
 "use strict";
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
@@ -7278,7 +7454,7 @@ class Logger {
 }
 exports.Logger = Logger;
 
-},{"debug":6}],38:[function(require,module,exports){
+},{"debug":75}],45:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.Producer = void 0;
@@ -7567,7 +7743,7 @@ class Producer extends EnhancedEventEmitter_1.EnhancedEventEmitter {
 }
 exports.Producer = Producer;
 
-},{"./EnhancedEventEmitter":36,"./Logger":37,"./errors":42}],39:[function(require,module,exports){
+},{"./EnhancedEventEmitter":43,"./Logger":44,"./errors":49}],46:[function(require,module,exports){
 "use strict";
 /**
  * The RTP capabilities define what mediasoup or an endpoint can receive at
@@ -7575,11 +7751,11 @@ exports.Producer = Producer;
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 
-},{}],40:[function(require,module,exports){
+},{}],47:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 
-},{}],41:[function(require,module,exports){
+},{}],48:[function(require,module,exports){
 "use strict";
 var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
     if (k2 === undefined) k2 = k;
@@ -8446,7 +8622,7 @@ class Transport extends EnhancedEventEmitter_1.EnhancedEventEmitter {
 }
 exports.Transport = Transport;
 
-},{"./Consumer":32,"./DataConsumer":33,"./DataProducer":34,"./EnhancedEventEmitter":36,"./Logger":37,"./Producer":38,"./errors":42,"./ortc":64,"./utils":67,"awaitqueue":3,"queue-microtask":70}],42:[function(require,module,exports){
+},{"./Consumer":39,"./DataConsumer":40,"./DataProducer":41,"./EnhancedEventEmitter":43,"./Logger":44,"./Producer":45,"./errors":49,"./ortc":71,"./utils":74,"awaitqueue":3,"queue-microtask":79}],49:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.InvalidStateError = exports.UnsupportedError = void 0;
@@ -8487,7 +8663,7 @@ class InvalidStateError extends Error {
 }
 exports.InvalidStateError = InvalidStateError;
 
-},{}],43:[function(require,module,exports){
+},{}],50:[function(require,module,exports){
 "use strict";
 var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
     if (k2 === undefined) k2 = k;
@@ -9184,7 +9360,7 @@ class Chrome111 extends HandlerInterface_1.HandlerInterface {
 }
 exports.Chrome111 = Chrome111;
 
-},{"../Logger":37,"../errors":42,"../ortc":64,"../scalabilityModes":65,"../utils":67,"./HandlerInterface":51,"./ortc/utils":57,"./sdp/RemoteSdp":59,"./sdp/commonUtils":60,"./sdp/unifiedPlanUtils":62,"sdp-transform":72}],44:[function(require,module,exports){
+},{"../Logger":44,"../errors":49,"../ortc":71,"../scalabilityModes":72,"../utils":74,"./HandlerInterface":58,"./ortc/utils":64,"./sdp/RemoteSdp":66,"./sdp/commonUtils":67,"./sdp/unifiedPlanUtils":69,"sdp-transform":81}],51:[function(require,module,exports){
 "use strict";
 var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
     if (k2 === undefined) k2 = k;
@@ -9740,7 +9916,7 @@ class Chrome55 extends HandlerInterface_1.HandlerInterface {
 }
 exports.Chrome55 = Chrome55;
 
-},{"../Logger":37,"../errors":42,"../ortc":64,"../utils":67,"./HandlerInterface":51,"./sdp/RemoteSdp":59,"./sdp/commonUtils":60,"./sdp/planBUtils":61,"sdp-transform":72}],45:[function(require,module,exports){
+},{"../Logger":44,"../errors":49,"../ortc":71,"../utils":74,"./HandlerInterface":58,"./sdp/RemoteSdp":66,"./sdp/commonUtils":67,"./sdp/planBUtils":68,"sdp-transform":81}],52:[function(require,module,exports){
 "use strict";
 var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
     if (k2 === undefined) k2 = k;
@@ -10351,7 +10527,7 @@ class Chrome67 extends HandlerInterface_1.HandlerInterface {
 }
 exports.Chrome67 = Chrome67;
 
-},{"../Logger":37,"../ortc":64,"../utils":67,"./HandlerInterface":51,"./sdp/RemoteSdp":59,"./sdp/commonUtils":60,"./sdp/planBUtils":61,"sdp-transform":72}],46:[function(require,module,exports){
+},{"../Logger":44,"../ortc":71,"../utils":74,"./HandlerInterface":58,"./sdp/RemoteSdp":66,"./sdp/commonUtils":67,"./sdp/planBUtils":68,"sdp-transform":81}],53:[function(require,module,exports){
 "use strict";
 var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
     if (k2 === undefined) k2 = k;
@@ -10987,7 +11163,7 @@ class Chrome70 extends HandlerInterface_1.HandlerInterface {
 }
 exports.Chrome70 = Chrome70;
 
-},{"../Logger":37,"../ortc":64,"../scalabilityModes":65,"../utils":67,"./HandlerInterface":51,"./sdp/RemoteSdp":59,"./sdp/commonUtils":60,"./sdp/unifiedPlanUtils":62,"sdp-transform":72}],47:[function(require,module,exports){
+},{"../Logger":44,"../ortc":71,"../scalabilityModes":72,"../utils":74,"./HandlerInterface":58,"./sdp/RemoteSdp":66,"./sdp/commonUtils":67,"./sdp/unifiedPlanUtils":69,"sdp-transform":81}],54:[function(require,module,exports){
 "use strict";
 var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
     if (k2 === undefined) k2 = k;
@@ -11704,7 +11880,7 @@ class Chrome74 extends HandlerInterface_1.HandlerInterface {
 }
 exports.Chrome74 = Chrome74;
 
-},{"../Logger":37,"../errors":42,"../ortc":64,"../scalabilityModes":65,"../utils":67,"./HandlerInterface":51,"./ortc/utils":57,"./sdp/RemoteSdp":59,"./sdp/commonUtils":60,"./sdp/unifiedPlanUtils":62,"sdp-transform":72}],48:[function(require,module,exports){
+},{"../Logger":44,"../errors":49,"../ortc":71,"../scalabilityModes":72,"../utils":74,"./HandlerInterface":58,"./ortc/utils":64,"./sdp/RemoteSdp":66,"./sdp/commonUtils":67,"./sdp/unifiedPlanUtils":69,"sdp-transform":81}],55:[function(require,module,exports){
 "use strict";
 var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
     if (k2 === undefined) k2 = k;
@@ -12159,7 +12335,7 @@ class Edge11 extends HandlerInterface_1.HandlerInterface {
 }
 exports.Edge11 = Edge11;
 
-},{"../Logger":37,"../errors":42,"../ortc":64,"../utils":67,"./HandlerInterface":51,"./ortc/edgeUtils":56}],49:[function(require,module,exports){
+},{"../Logger":44,"../errors":49,"../ortc":71,"../utils":74,"./HandlerInterface":58,"./ortc/edgeUtils":63}],56:[function(require,module,exports){
 "use strict";
 var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
     if (k2 === undefined) k2 = k;
@@ -12874,7 +13050,7 @@ class Firefox120 extends HandlerInterface_1.HandlerInterface {
 }
 exports.Firefox120 = Firefox120;
 
-},{"../Logger":37,"../errors":42,"../ortc":64,"../scalabilityModes":65,"../utils":67,"./HandlerInterface":51,"./sdp/RemoteSdp":59,"./sdp/commonUtils":60,"./sdp/unifiedPlanUtils":62,"sdp-transform":72}],50:[function(require,module,exports){
+},{"../Logger":44,"../errors":49,"../ortc":71,"../scalabilityModes":72,"../utils":74,"./HandlerInterface":58,"./sdp/RemoteSdp":66,"./sdp/commonUtils":67,"./sdp/unifiedPlanUtils":69,"sdp-transform":81}],57:[function(require,module,exports){
 "use strict";
 var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
     if (k2 === undefined) k2 = k;
@@ -13607,7 +13783,7 @@ class Firefox60 extends HandlerInterface_1.HandlerInterface {
 }
 exports.Firefox60 = Firefox60;
 
-},{"../Logger":37,"../errors":42,"../ortc":64,"../scalabilityModes":65,"../utils":67,"./HandlerInterface":51,"./sdp/RemoteSdp":59,"./sdp/commonUtils":60,"./sdp/unifiedPlanUtils":62,"sdp-transform":72}],51:[function(require,module,exports){
+},{"../Logger":44,"../errors":49,"../ortc":71,"../scalabilityModes":72,"../utils":74,"./HandlerInterface":58,"./sdp/RemoteSdp":66,"./sdp/commonUtils":67,"./sdp/unifiedPlanUtils":69,"sdp-transform":81}],58:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.HandlerInterface = void 0;
@@ -13619,7 +13795,7 @@ class HandlerInterface extends EnhancedEventEmitter_1.EnhancedEventEmitter {
 }
 exports.HandlerInterface = HandlerInterface;
 
-},{"../EnhancedEventEmitter":36}],52:[function(require,module,exports){
+},{"../EnhancedEventEmitter":43}],59:[function(require,module,exports){
 "use strict";
 var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
     if (k2 === undefined) k2 = k;
@@ -14190,7 +14366,7 @@ class ReactNative extends HandlerInterface_1.HandlerInterface {
 }
 exports.ReactNative = ReactNative;
 
-},{"../Logger":37,"../errors":42,"../ortc":64,"../utils":67,"./HandlerInterface":51,"./sdp/RemoteSdp":59,"./sdp/commonUtils":60,"./sdp/planBUtils":61,"sdp-transform":72}],53:[function(require,module,exports){
+},{"../Logger":44,"../errors":49,"../ortc":71,"../utils":74,"./HandlerInterface":58,"./sdp/RemoteSdp":66,"./sdp/commonUtils":67,"./sdp/planBUtils":68,"sdp-transform":81}],60:[function(require,module,exports){
 "use strict";
 var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
     if (k2 === undefined) k2 = k;
@@ -14930,7 +15106,7 @@ class ReactNativeUnifiedPlan extends HandlerInterface_1.HandlerInterface {
 }
 exports.ReactNativeUnifiedPlan = ReactNativeUnifiedPlan;
 
-},{"../Logger":37,"../errors":42,"../ortc":64,"../scalabilityModes":65,"../utils":67,"./HandlerInterface":51,"./ortc/utils":57,"./sdp/RemoteSdp":59,"./sdp/commonUtils":60,"./sdp/unifiedPlanUtils":62,"sdp-transform":72}],54:[function(require,module,exports){
+},{"../Logger":44,"../errors":49,"../ortc":71,"../scalabilityModes":72,"../utils":74,"./HandlerInterface":58,"./ortc/utils":64,"./sdp/RemoteSdp":66,"./sdp/commonUtils":67,"./sdp/unifiedPlanUtils":69,"sdp-transform":81}],61:[function(require,module,exports){
 "use strict";
 var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
     if (k2 === undefined) k2 = k;
@@ -15536,7 +15712,7 @@ class Safari11 extends HandlerInterface_1.HandlerInterface {
 }
 exports.Safari11 = Safari11;
 
-},{"../Logger":37,"../ortc":64,"../utils":67,"./HandlerInterface":51,"./sdp/RemoteSdp":59,"./sdp/commonUtils":60,"./sdp/planBUtils":61,"sdp-transform":72}],55:[function(require,module,exports){
+},{"../Logger":44,"../ortc":71,"../utils":74,"./HandlerInterface":58,"./sdp/RemoteSdp":66,"./sdp/commonUtils":67,"./sdp/planBUtils":68,"sdp-transform":81}],62:[function(require,module,exports){
 "use strict";
 var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
     if (k2 === undefined) k2 = k;
@@ -16228,7 +16404,7 @@ class Safari12 extends HandlerInterface_1.HandlerInterface {
 }
 exports.Safari12 = Safari12;
 
-},{"../Logger":37,"../errors":42,"../ortc":64,"../scalabilityModes":65,"../utils":67,"./HandlerInterface":51,"./ortc/utils":57,"./sdp/RemoteSdp":59,"./sdp/commonUtils":60,"./sdp/unifiedPlanUtils":62,"sdp-transform":72}],56:[function(require,module,exports){
+},{"../Logger":44,"../errors":49,"../ortc":71,"../scalabilityModes":72,"../utils":74,"./HandlerInterface":58,"./ortc/utils":64,"./sdp/RemoteSdp":66,"./sdp/commonUtils":67,"./sdp/unifiedPlanUtils":69,"sdp-transform":81}],63:[function(require,module,exports){
 "use strict";
 var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
     if (k2 === undefined) k2 = k;
@@ -16324,7 +16500,7 @@ function mangleRtpParameters(rtpParameters) {
 }
 exports.mangleRtpParameters = mangleRtpParameters;
 
-},{"../../utils":67}],57:[function(require,module,exports){
+},{"../../utils":74}],64:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.addNackSuppportForOpus = void 0;
@@ -16345,7 +16521,7 @@ function addNackSuppportForOpus(rtpCapabilities) {
 }
 exports.addNackSuppportForOpus = addNackSuppportForOpus;
 
-},{}],58:[function(require,module,exports){
+},{}],65:[function(require,module,exports){
 "use strict";
 var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
     if (k2 === undefined) k2 = k;
@@ -16919,7 +17095,7 @@ function getCodecName(codec) {
     return mimeTypeMatch[2];
 }
 
-},{"../../utils":67,"sdp-transform":72}],59:[function(require,module,exports){
+},{"../../utils":74,"sdp-transform":81}],66:[function(require,module,exports){
 "use strict";
 var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
     if (k2 === undefined) k2 = k;
@@ -17222,7 +17398,7 @@ class RemoteSdp {
 }
 exports.RemoteSdp = RemoteSdp;
 
-},{"../../Logger":37,"./MediaSection":58,"sdp-transform":72}],60:[function(require,module,exports){
+},{"../../Logger":44,"./MediaSection":65,"sdp-transform":81}],67:[function(require,module,exports){
 "use strict";
 var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
     if (k2 === undefined) k2 = k;
@@ -17453,7 +17629,7 @@ function applyCodecParameters({ offerRtpParameters, answerMediaObject, }) {
 }
 exports.applyCodecParameters = applyCodecParameters;
 
-},{"sdp-transform":72}],61:[function(require,module,exports){
+},{"sdp-transform":81}],68:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.addLegacySimulcast = exports.getRtpEncodings = void 0;
@@ -17607,7 +17783,7 @@ function addLegacySimulcast({ offerMediaObject, track, numStreams, }) {
 }
 exports.addLegacySimulcast = addLegacySimulcast;
 
-},{}],62:[function(require,module,exports){
+},{}],69:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.addLegacySimulcast = exports.getRtpEncodings = void 0;
@@ -17737,7 +17913,7 @@ function addLegacySimulcast({ offerMediaObject, numStreams, }) {
 }
 exports.addLegacySimulcast = addLegacySimulcast;
 
-},{}],63:[function(require,module,exports){
+},{}],70:[function(require,module,exports){
 "use strict";
 var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
     if (k2 === undefined) k2 = k;
@@ -17784,7 +17960,7 @@ exports.version = '3.7.8';
 var scalabilityModes_1 = require("./scalabilityModes");
 Object.defineProperty(exports, "parseScalabilityMode", { enumerable: true, get: function () { return scalabilityModes_1.parse; } });
 
-},{"./Device":35,"./scalabilityModes":65,"./types":66,"debug":6}],64:[function(require,module,exports){
+},{"./Device":42,"./scalabilityModes":72,"./types":73,"debug":75}],71:[function(require,module,exports){
 "use strict";
 var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
     if (k2 === undefined) k2 = k;
@@ -18691,7 +18867,7 @@ function reduceRtcpFeedback(codecA, codecB) {
     return reducedRtcpFeedback;
 }
 
-},{"./utils":67,"h264-profile-level-id":30}],65:[function(require,module,exports){
+},{"./utils":74,"h264-profile-level-id":34}],72:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.parse = void 0;
@@ -18713,7 +18889,7 @@ function parse(scalabilityMode) {
 }
 exports.parse = parse;
 
-},{}],66:[function(require,module,exports){
+},{}],73:[function(require,module,exports){
 "use strict";
 var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
     if (k2 === undefined) k2 = k;
@@ -18741,7 +18917,7 @@ __exportStar(require("./SctpParameters"), exports);
 __exportStar(require("./handlers/HandlerInterface"), exports);
 __exportStar(require("./errors"), exports);
 
-},{"./Consumer":32,"./DataConsumer":33,"./DataProducer":34,"./Device":35,"./Producer":38,"./RtpParameters":39,"./SctpParameters":40,"./Transport":41,"./errors":42,"./handlers/HandlerInterface":51}],67:[function(require,module,exports){
+},{"./Consumer":39,"./DataConsumer":40,"./DataProducer":41,"./Device":42,"./Producer":45,"./RtpParameters":46,"./SctpParameters":47,"./Transport":48,"./errors":49,"./handlers/HandlerInterface":58}],74:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.deepFreeze = exports.generateRandomNumber = exports.clone = void 0;
@@ -18789,171 +18965,13 @@ function deepFreeze(object) {
 }
 exports.deepFreeze = deepFreeze;
 
-},{}],68:[function(require,module,exports){
-/**
- * Helpers.
- */
-
-var s = 1000;
-var m = s * 60;
-var h = m * 60;
-var d = h * 24;
-var w = d * 7;
-var y = d * 365.25;
-
-/**
- * Parse or format the given `val`.
- *
- * Options:
- *
- *  - `long` verbose formatting [false]
- *
- * @param {String|Number} val
- * @param {Object} [options]
- * @throws {Error} throw an error if val is not a non-empty string or a number
- * @return {String|Number}
- * @api public
- */
-
-module.exports = function(val, options) {
-  options = options || {};
-  var type = typeof val;
-  if (type === 'string' && val.length > 0) {
-    return parse(val);
-  } else if (type === 'number' && isFinite(val)) {
-    return options.long ? fmtLong(val) : fmtShort(val);
-  }
-  throw new Error(
-    'val is not a non-empty string or a valid number. val=' +
-      JSON.stringify(val)
-  );
-};
-
-/**
- * Parse the given `str` and return milliseconds.
- *
- * @param {String} str
- * @return {Number}
- * @api private
- */
-
-function parse(str) {
-  str = String(str);
-  if (str.length > 100) {
-    return;
-  }
-  var match = /^(-?(?:\d+)?\.?\d+) *(milliseconds?|msecs?|ms|seconds?|secs?|s|minutes?|mins?|m|hours?|hrs?|h|days?|d|weeks?|w|years?|yrs?|y)?$/i.exec(
-    str
-  );
-  if (!match) {
-    return;
-  }
-  var n = parseFloat(match[1]);
-  var type = (match[2] || 'ms').toLowerCase();
-  switch (type) {
-    case 'years':
-    case 'year':
-    case 'yrs':
-    case 'yr':
-    case 'y':
-      return n * y;
-    case 'weeks':
-    case 'week':
-    case 'w':
-      return n * w;
-    case 'days':
-    case 'day':
-    case 'd':
-      return n * d;
-    case 'hours':
-    case 'hour':
-    case 'hrs':
-    case 'hr':
-    case 'h':
-      return n * h;
-    case 'minutes':
-    case 'minute':
-    case 'mins':
-    case 'min':
-    case 'm':
-      return n * m;
-    case 'seconds':
-    case 'second':
-    case 'secs':
-    case 'sec':
-    case 's':
-      return n * s;
-    case 'milliseconds':
-    case 'millisecond':
-    case 'msecs':
-    case 'msec':
-    case 'ms':
-      return n;
-    default:
-      return undefined;
-  }
-}
-
-/**
- * Short format for `ms`.
- *
- * @param {Number} ms
- * @return {String}
- * @api private
- */
-
-function fmtShort(ms) {
-  var msAbs = Math.abs(ms);
-  if (msAbs >= d) {
-    return Math.round(ms / d) + 'd';
-  }
-  if (msAbs >= h) {
-    return Math.round(ms / h) + 'h';
-  }
-  if (msAbs >= m) {
-    return Math.round(ms / m) + 'm';
-  }
-  if (msAbs >= s) {
-    return Math.round(ms / s) + 's';
-  }
-  return ms + 'ms';
-}
-
-/**
- * Long format for `ms`.
- *
- * @param {Number} ms
- * @return {String}
- * @api private
- */
-
-function fmtLong(ms) {
-  var msAbs = Math.abs(ms);
-  if (msAbs >= d) {
-    return plural(ms, msAbs, d, 'day');
-  }
-  if (msAbs >= h) {
-    return plural(ms, msAbs, h, 'hour');
-  }
-  if (msAbs >= m) {
-    return plural(ms, msAbs, m, 'minute');
-  }
-  if (msAbs >= s) {
-    return plural(ms, msAbs, s, 'second');
-  }
-  return ms + ' ms';
-}
-
-/**
- * Pluralization helper.
- */
-
-function plural(ms, msAbs, n, name) {
-  var isPlural = msAbs >= n * 1.5;
-  return Math.round(ms / n) + ' ' + name + (isPlural ? 's' : '');
-}
-
-},{}],69:[function(require,module,exports){
+},{}],75:[function(require,module,exports){
+arguments[4][4][0].apply(exports,arguments)
+},{"./common":76,"_process":78,"dup":4}],76:[function(require,module,exports){
+arguments[4][5][0].apply(exports,arguments)
+},{"dup":5,"ms":77}],77:[function(require,module,exports){
+arguments[4][6][0].apply(exports,arguments)
+},{"dup":6}],78:[function(require,module,exports){
 // shim for using process in browser
 var process = module.exports = {};
 
@@ -19139,7 +19157,7 @@ process.chdir = function (dir) {
 };
 process.umask = function() { return 0; };
 
-},{}],70:[function(require,module,exports){
+},{}],79:[function(require,module,exports){
 (function (global){(function (){
 /*! queue-microtask. MIT License. Feross Aboukhadijeh <https://feross.org/opensource> */
 let promise
@@ -19152,7 +19170,7 @@ module.exports = typeof queueMicrotask === 'function'
     .catch(err => setTimeout(() => { throw err }, 0))
 
 }).call(this)}).call(this,typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
-},{}],71:[function(require,module,exports){
+},{}],80:[function(require,module,exports){
 var grammar = module.exports = {
   v: [{
     name: 'version',
@@ -19648,7 +19666,7 @@ Object.keys(grammar).forEach(function (key) {
   });
 });
 
-},{}],72:[function(require,module,exports){
+},{}],81:[function(require,module,exports){
 var parser = require('./parser');
 var writer = require('./writer');
 
@@ -19661,7 +19679,7 @@ exports.parseRemoteCandidates = parser.parseRemoteCandidates;
 exports.parseImageAttributes = parser.parseImageAttributes;
 exports.parseSimulcastStreamList = parser.parseSimulcastStreamList;
 
-},{"./parser":73,"./writer":74}],73:[function(require,module,exports){
+},{"./parser":82,"./writer":83}],82:[function(require,module,exports){
 var toIntIfInt = function (v) {
   return String(Number(v)) === v ? Number(v) : v;
 };
@@ -19787,7 +19805,7 @@ exports.parseSimulcastStreamList = function (str) {
   });
 };
 
-},{"./grammar":71}],74:[function(require,module,exports){
+},{"./grammar":80}],83:[function(require,module,exports){
 var grammar = require('./grammar');
 
 // customized util.format - discards excess arguments and can void middle ones
@@ -19903,7 +19921,7 @@ module.exports = function (session, opts) {
   return sdp.join('\r\n') + '\r\n';
 };
 
-},{"./grammar":71}],75:[function(require,module,exports){
+},{"./grammar":80}],84:[function(require,module,exports){
 "use strict";
 /**
  * Initialize backoff timer with `opts`.
@@ -19975,7 +19993,7 @@ Backoff.prototype.setJitter = function (jitter) {
     this.jitter = jitter;
 };
 
-},{}],76:[function(require,module,exports){
+},{}],85:[function(require,module,exports){
 "use strict";
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
@@ -20046,7 +20064,7 @@ Object.defineProperty(exports, "protocol", { enumerable: true, get: function () 
 
 module.exports = lookup;
 
-},{"./manager.js":77,"./socket.js":79,"./url.js":80,"debug":6,"socket.io-parser":82}],77:[function(require,module,exports){
+},{"./manager.js":86,"./socket.js":88,"./url.js":89,"debug":90,"socket.io-parser":94}],86:[function(require,module,exports){
 "use strict";
 var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
     if (k2 === undefined) k2 = k;
@@ -20451,7 +20469,7 @@ class Manager extends component_emitter_1.Emitter {
 }
 exports.Manager = Manager;
 
-},{"./contrib/backo2.js":75,"./on.js":78,"./socket.js":79,"@socket.io/component-emitter":1,"debug":6,"engine.io-client":13,"socket.io-parser":82}],78:[function(require,module,exports){
+},{"./contrib/backo2.js":84,"./on.js":87,"./socket.js":88,"@socket.io/component-emitter":1,"debug":90,"engine.io-client":14,"socket.io-parser":94}],87:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.on = void 0;
@@ -20463,7 +20481,7 @@ function on(obj, ev, fn) {
 }
 exports.on = on;
 
-},{}],79:[function(require,module,exports){
+},{}],88:[function(require,module,exports){
 "use strict";
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
@@ -21375,7 +21393,7 @@ class Socket extends component_emitter_1.Emitter {
 }
 exports.Socket = Socket;
 
-},{"./on.js":78,"@socket.io/component-emitter":1,"debug":6,"socket.io-parser":82}],80:[function(require,module,exports){
+},{"./on.js":87,"@socket.io/component-emitter":1,"debug":90,"socket.io-parser":94}],89:[function(require,module,exports){
 "use strict";
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
@@ -21447,7 +21465,13 @@ function url(uri, path = "", loc) {
 }
 exports.url = url;
 
-},{"debug":6,"engine.io-client":13}],81:[function(require,module,exports){
+},{"debug":90,"engine.io-client":14}],90:[function(require,module,exports){
+arguments[4][4][0].apply(exports,arguments)
+},{"./common":91,"_process":78,"dup":4}],91:[function(require,module,exports){
+arguments[4][5][0].apply(exports,arguments)
+},{"dup":5,"ms":92}],92:[function(require,module,exports){
+arguments[4][6][0].apply(exports,arguments)
+},{"dup":6}],93:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.reconstructPacket = exports.deconstructPacket = void 0;
@@ -21537,7 +21561,7 @@ function _reconstructPacket(data, buffers) {
     return data;
 }
 
-},{"./is-binary.js":83}],82:[function(require,module,exports){
+},{"./is-binary.js":95}],94:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.Decoder = exports.Encoder = exports.PacketType = exports.protocol = void 0;
@@ -21860,7 +21884,7 @@ class BinaryReconstructor {
     }
 }
 
-},{"./binary.js":81,"./is-binary.js":83,"@socket.io/component-emitter":1,"debug":6}],83:[function(require,module,exports){
+},{"./binary.js":93,"./is-binary.js":95,"@socket.io/component-emitter":1,"debug":96}],95:[function(require,module,exports){
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.hasBinary = exports.isBinary = void 0;
@@ -21917,7 +21941,13 @@ function hasBinary(obj, toJSON) {
 }
 exports.hasBinary = hasBinary;
 
-},{}],84:[function(require,module,exports){
+},{}],96:[function(require,module,exports){
+arguments[4][4][0].apply(exports,arguments)
+},{"./common":97,"_process":78,"dup":4}],97:[function(require,module,exports){
+arguments[4][5][0].apply(exports,arguments)
+},{"dup":5,"ms":98}],98:[function(require,module,exports){
+arguments[4][6][0].apply(exports,arguments)
+},{"dup":6}],99:[function(require,module,exports){
 /////////////////////////////////////////////////////////////////////////////////
 /* UAParser.js v1.0.37
    Copyright © 2012-2021 Faisal Salman <f@faisalman.com>
@@ -22865,7 +22895,7 @@ exports.hasBinary = hasBinary;
 
 })(typeof window === 'object' ? window : this);
 
-},{}],85:[function(require,module,exports){
+},{}],100:[function(require,module,exports){
 // import {io} from "/socket.io-client.js"
 // import * as mediasoup from "mediasoup-client.js";
 
@@ -22873,19 +22903,15 @@ const io = require("socket.io-client");
 const mediasoup = require("mediasoup-client");
 
 const btnGetLocalVideo = document.querySelector("#getLocalVideo");
-const btnGetRPTCapabilities = document.querySelector("#getRPTCapabilities");
-const btnCreateDevice = document.querySelector("#createDevice");
-const btnCreateSendTransport = document.querySelector("#createSendTransport");
-const btnConnectSendTransportProduce = document.querySelector("#connectSendTransportProduce");
-const btnCreateRecevTransport = document.querySelector("#createRecevTransport");
-const btnConnectRecevTransportConsume = document.querySelector("#connectRecevTransportConsume");
+const btnConnectRecevTransportConsume = document.querySelector("#connectRecevSendTransportConsume");
+
 let localVideo = document.querySelector("#localVideo");
 let remoteVideo = document.querySelector("#remoteVideo");
 
 const socket = io("/mediasoup");
 
-socket.on("connection-success", ({socketId}) => {
-    console.log(socketId);
+socket.on("connection-success", ({socketId,existsProducer}) => {
+    console.log(socketId,existsProducer);
 });
 
 let device;
@@ -22894,6 +22920,8 @@ let producerTransport;
 let consumerTransport
 let producer;
 let consumer;
+
+let isProducer = false;
 
 let params = {
     // mediasoup params
@@ -22920,28 +22948,55 @@ let params = {
 }
 
 
-const streamSuccess = async (stream) => {
+const streamSuccess =  (stream) => {
 
     localVideo.srcObject = stream;
-    const track = await stream.getVideoTracks()[0];
+    const track = stream.getVideoTracks()[0];
 
     params = {track, ...params}
+
+    goConnect(true);
 }
 
 const getLocalStream = async () => {
-    try {
-        let mediaStream = await navigator.mediaDevices.getUserMedia({
-                audio: false,
-                video: {
-                    width: {min: 640, max: 720},
-                    height: {min: 400, max: 720}
-                }
-            }
-        )
-        await streamSuccess(mediaStream);
-    } catch (error) {
-        console.log(error.message);
-    }
+    // try {
+    //     let mediaStream = await navigator.mediaDevices.getUserMedia({
+    //             audio: false,
+    //             video: {
+    //                 width: {min: 640, max: 720},
+    //                 height: {min: 400, max: 720}
+    //             }
+    //         }
+    //     )
+    //     await streamSuccess(mediaStream);
+    // } catch (error) {
+    //     console.log(error.message);
+    // }
+
+    // using a call back
+    navigator.mediaDevices.getUserMedia({
+        audio: false,
+        video: {
+            width: {min: 640, max: 1920},
+            height: {min: 400, max: 1080}
+        }
+    }).then(streamSuccess)
+        .catch(error => {
+            console.log(error.message)
+        });
+}
+
+const goConsume = ()=>{
+    goConnect(false);
+}
+
+const goConnect = (producerOrConsumer)=>{
+    isProducer = producerOrConsumer;
+    getRPTCapabilities();
+}
+
+const goCreateTransport = ()=>{
+    isProducer ? createSendTransport():createRecevTransport();
 }
 
 //CREATE DEVICE
@@ -22953,7 +23008,10 @@ const createDevice = async () => {
             routerRtpCapabilities: rtpCapabilities,
         });
 
-        console.log("RTP Capabilities", rtpCapabilities);
+        console.log("Device RTP Capabilities", rtpCapabilities);
+
+        // once the device loads then create transport
+        goCreateTransport();
     } catch (e) {
         console.log(e)
         if (e.name === "UnsupportedError") {
@@ -22963,10 +23021,14 @@ const createDevice = async () => {
 }
 
 const getRPTCapabilities = () => {
-    socket.emit("getRPTCapabilities", (data) => {
+    //todo: event was changed from getRPTCapabilities to createRoom
+    socket.emit("createRoom", (data) => {
         console.log(`Router RTP Capabilities...${data.rtpCapabilities}`);
 
         rtpCapabilities = data.rtpCapabilities;
+
+        // once we have the rtpCapabilities from the Router, create the device
+        createDevice();
     });
 }
 
@@ -23000,6 +23062,10 @@ const createSendTransport = () => {
             console.log(parameters);
 
             try {
+                // tell the server to create a Producer
+                // with the following parameters and produce
+                // and expect back a server side producer id
+                // see server's socket.on("transport-produce ,.... )
                 await socket.emit("transport-produce", {
                     // transportId: producerTransport.id,
                     kind: parameters.kind,
@@ -23013,10 +23079,16 @@ const createSendTransport = () => {
             } catch (e) {
                 errback(e);
             }
-        })
+        });
+
+        connectSendTransportProduce();
     });
 }
 const connectSendTransportProduce = async () => {
+    // we now call produce() to instruct the producer transport
+    // to send media to the Router
+    // https://mediasoup.org/documentation/v3/mediasoup-client/api/#transport-produce
+    // this action will trigger the "connect" and "produce" events above
     producer = await producerTransport.produce(params);
     producer.on("trackended", () => {
         console.log("track ended");
@@ -23042,18 +23114,18 @@ const createRecevTransport = async () => {
         // create recv transport
         consumerTransport = device.createRecvTransport(params);
 
-        consumerTransport.on("connect",async({dtlsParameters},callback,errback)=>{
-            try{
+        consumerTransport.on("connect", async ({dtlsParameters}, callback, errback) => {
+            try {
                 // signal local DTLS parameters to the server side transport
 
-                await socket.emit("transport-recv-connect",{
+                await socket.emit("transport-recv-connect", {
                     // transportId:consumerTransport.id,
                     dtlsParameters,
                 });
 
                 // tell the transport that the parameters were transmitted back to the server
                 callback();
-            }catch (e) {
+            } catch (e) {
                 // tell the transport that something was wrong
                 errback(e);
             }
@@ -23061,21 +23133,21 @@ const createRecevTransport = async () => {
     });
 }
 
-const connectRecevTransportConsume = async()=>{
-    await socket.emit("consume",{
-        rtpCapabilities:device.rtpCapabilities,
-    },async ({params})=>{
-        if(params.error){
+const connectRecevSendTransportConsume = async () => {
+    await socket.emit("consume", {
+        rtpCapabilities: device.rtpCapabilities,
+    }, async ({params}) => {
+        if (params.error) {
             console.log("cannot consume");
             return;
         }
 
         console.log(params);
         consumer = await consumerTransport.consume({
-            id:params.id,
-            producerId:params.producerId,
-            kind:params.kind,
-            rtpParameters:params.rtpParameters,
+            id: params.id,
+            producerId: params.producerId,
+            kind: params.kind,
+            rtpParameters: params.rtpParameters,
         });
 
         const {track} = consumer;
@@ -23086,12 +23158,13 @@ const connectRecevTransportConsume = async()=>{
 }
 
 btnGetLocalVideo.addEventListener("click", getLocalStream);
-btnGetRPTCapabilities.addEventListener("click", getRPTCapabilities);
-btnCreateDevice.addEventListener("click", createDevice);
-btnCreateSendTransport.addEventListener("click", createSendTransport);
-btnConnectSendTransportProduce.addEventListener("click", connectSendTransportProduce);
-btnCreateRecevTransport.addEventListener("click", createRecevTransport);
-btnConnectRecevTransportConsume.addEventListener("click", connectRecevTransportConsume);
+// btnGetRPTCapabilities.addEventListener("click", getRPTCapabilities);
+// btnCreateDevice.addEventListener("click", createDevice);
+// btnCreateSendTransport.addEventListener("click", createSendTransport);
+// btnConnectSendTransportProduce.addEventListener("click", connectSendTransportProduce);
+// btnCreateRecevTransport.addEventListener("click", createRecevTransport);
+// btnConnectRecevTransportConsume.addEventListener("click", connectRecevSendTransportConsume);
+btnConnectRecevTransportConsume.addEventListener("click", goConsume);
 
 
-},{"mediasoup-client":63,"socket.io-client":76}]},{},[85]);
+},{"mediasoup-client":70,"socket.io-client":85}]},{},[100]);

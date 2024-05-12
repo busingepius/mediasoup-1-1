@@ -5,19 +5,15 @@ const io = require("socket.io-client");
 const mediasoup = require("mediasoup-client");
 
 const btnGetLocalVideo = document.querySelector("#getLocalVideo");
-const btnGetRPTCapabilities = document.querySelector("#getRPTCapabilities");
-const btnCreateDevice = document.querySelector("#createDevice");
-const btnCreateSendTransport = document.querySelector("#createSendTransport");
-const btnConnectSendTransportProduce = document.querySelector("#connectSendTransportProduce");
-const btnCreateRecevTransport = document.querySelector("#createRecevTransport");
-const btnConnectRecevTransportConsume = document.querySelector("#connectRecevTransportConsume");
+const btnConnectRecevTransportConsume = document.querySelector("#connectRecevSendTransportConsume");
+
 let localVideo = document.querySelector("#localVideo");
 let remoteVideo = document.querySelector("#remoteVideo");
 
 const socket = io("/mediasoup");
 
-socket.on("connection-success", ({socketId}) => {
-    console.log(socketId);
+socket.on("connection-success", ({socketId,existsProducer}) => {
+    console.log(socketId,existsProducer);
 });
 
 let device;
@@ -26,6 +22,8 @@ let producerTransport;
 let consumerTransport
 let producer;
 let consumer;
+
+let isProducer = false;
 
 let params = {
     // mediasoup params
@@ -52,28 +50,55 @@ let params = {
 }
 
 
-const streamSuccess = async (stream) => {
+const streamSuccess =  (stream) => {
 
     localVideo.srcObject = stream;
-    const track = await stream.getVideoTracks()[0];
+    const track = stream.getVideoTracks()[0];
 
     params = {track, ...params}
+
+    goConnect(true);
 }
 
 const getLocalStream = async () => {
-    try {
-        let mediaStream = await navigator.mediaDevices.getUserMedia({
-                audio: false,
-                video: {
-                    width: {min: 640, max: 720},
-                    height: {min: 400, max: 720}
-                }
-            }
-        )
-        await streamSuccess(mediaStream);
-    } catch (error) {
-        console.log(error.message);
-    }
+    // try {
+    //     let mediaStream = await navigator.mediaDevices.getUserMedia({
+    //             audio: false,
+    //             video: {
+    //                 width: {min: 640, max: 720},
+    //                 height: {min: 400, max: 720}
+    //             }
+    //         }
+    //     )
+    //     await streamSuccess(mediaStream);
+    // } catch (error) {
+    //     console.log(error.message);
+    // }
+
+    // using a call back
+    navigator.mediaDevices.getUserMedia({
+        audio: false,
+        video: {
+            width: {min: 640, max: 1920},
+            height: {min: 400, max: 1080}
+        }
+    }).then(streamSuccess)
+        .catch(error => {
+            console.log(error.message)
+        });
+}
+
+const goConsume = ()=>{
+    goConnect(false);
+}
+
+const goConnect = (producerOrConsumer)=>{
+    isProducer = producerOrConsumer;
+    getRPTCapabilities();
+}
+
+const goCreateTransport = ()=>{
+    isProducer ? createSendTransport():createRecevTransport();
 }
 
 //CREATE DEVICE
@@ -85,7 +110,10 @@ const createDevice = async () => {
             routerRtpCapabilities: rtpCapabilities,
         });
 
-        console.log("RTP Capabilities", rtpCapabilities);
+        console.log("Device RTP Capabilities", rtpCapabilities);
+
+        // once the device loads then create transport
+        goCreateTransport();
     } catch (e) {
         console.log(e)
         if (e.name === "UnsupportedError") {
@@ -95,10 +123,14 @@ const createDevice = async () => {
 }
 
 const getRPTCapabilities = () => {
-    socket.emit("getRPTCapabilities", (data) => {
+    //todo: event was changed from getRPTCapabilities to createRoom
+    socket.emit("createRoom", (data) => {
         console.log(`Router RTP Capabilities...${data.rtpCapabilities}`);
 
         rtpCapabilities = data.rtpCapabilities;
+
+        // once we have the rtpCapabilities from the Router, create the device
+        createDevice();
     });
 }
 
@@ -132,6 +164,10 @@ const createSendTransport = () => {
             console.log(parameters);
 
             try {
+                // tell the server to create a Producer
+                // with the following parameters and produce
+                // and expect back a server side producer id
+                // see server's socket.on("transport-produce ,.... )
                 await socket.emit("transport-produce", {
                     // transportId: producerTransport.id,
                     kind: parameters.kind,
@@ -145,10 +181,16 @@ const createSendTransport = () => {
             } catch (e) {
                 errback(e);
             }
-        })
+        });
+
+        connectSendTransportProduce();
     });
 }
 const connectSendTransportProduce = async () => {
+    // we now call produce() to instruct the producer transport
+    // to send media to the Router
+    // https://mediasoup.org/documentation/v3/mediasoup-client/api/#transport-produce
+    // this action will trigger the "connect" and "produce" events above
     producer = await producerTransport.produce(params);
     producer.on("trackended", () => {
         console.log("track ended");
@@ -174,18 +216,18 @@ const createRecevTransport = async () => {
         // create recv transport
         consumerTransport = device.createRecvTransport(params);
 
-        consumerTransport.on("connect",async({dtlsParameters},callback,errback)=>{
-            try{
+        consumerTransport.on("connect", async ({dtlsParameters}, callback, errback) => {
+            try {
                 // signal local DTLS parameters to the server side transport
 
-                await socket.emit("transport-recv-connect",{
+                await socket.emit("transport-recv-connect", {
                     // transportId:consumerTransport.id,
                     dtlsParameters,
                 });
 
                 // tell the transport that the parameters were transmitted back to the server
                 callback();
-            }catch (e) {
+            } catch (e) {
                 // tell the transport that something was wrong
                 errback(e);
             }
@@ -193,21 +235,21 @@ const createRecevTransport = async () => {
     });
 }
 
-const connectRecevTransportConsume = async()=>{
-    await socket.emit("consume",{
-        rtpCapabilities:device.rtpCapabilities,
-    },async ({params})=>{
-        if(params.error){
+const connectRecevSendTransportConsume = async () => {
+    await socket.emit("consume", {
+        rtpCapabilities: device.rtpCapabilities,
+    }, async ({params}) => {
+        if (params.error) {
             console.log("cannot consume");
             return;
         }
 
         console.log(params);
         consumer = await consumerTransport.consume({
-            id:params.id,
-            producerId:params.producerId,
-            kind:params.kind,
-            rtpParameters:params.rtpParameters,
+            id: params.id,
+            producerId: params.producerId,
+            kind: params.kind,
+            rtpParameters: params.rtpParameters,
         });
 
         const {track} = consumer;
@@ -218,10 +260,11 @@ const connectRecevTransportConsume = async()=>{
 }
 
 btnGetLocalVideo.addEventListener("click", getLocalStream);
-btnGetRPTCapabilities.addEventListener("click", getRPTCapabilities);
-btnCreateDevice.addEventListener("click", createDevice);
-btnCreateSendTransport.addEventListener("click", createSendTransport);
-btnConnectSendTransportProduce.addEventListener("click", connectSendTransportProduce);
-btnCreateRecevTransport.addEventListener("click", createRecevTransport);
-btnConnectRecevTransportConsume.addEventListener("click", connectRecevTransportConsume);
+// btnGetRPTCapabilities.addEventListener("click", getRPTCapabilities);
+// btnCreateDevice.addEventListener("click", createDevice);
+// btnCreateSendTransport.addEventListener("click", createSendTransport);
+// btnConnectSendTransportProduce.addEventListener("click", connectSendTransportProduce);
+// btnCreateRecevTransport.addEventListener("click", createRecevTransport);
+// btnConnectRecevTransportConsume.addEventListener("click", connectRecevSendTransportConsume);
+btnConnectRecevTransportConsume.addEventListener("click", goConsume);
 

@@ -11,34 +11,19 @@
         <video controls autoplay id="localVideo">
             <!--<source src="https://res.cloudinary.com/seros/video/upload/v1715008241/netflix_clone_ptw4da.mp4" type="video/mp4">-->
         </video>
+        <div>
+            <button id="getLocalVideo">Publish</button>
+        </div>
     </div>
     <div>
         <p>remote video</p>
-        <video controls autoplay id="remoteVideo">
-            <!--<source src="https://res.cloudinary.com/seros/video/upload/v1715008241/netflix_clone_ptw4da.mp4" type="video/mp4">-->
-        </video>
-    </div>
-
-</div>
-<br>
-<div>
-    <div>
-        <button id="getLocalVideo">1. Get Local Video</button>
-    </div>
-    <br>
-    <div>
-        <button id="getRPTCapabilities">2. Get RPT Capabilities</button>
-        <button id="createDevice">3. Create Device</button>
-    </div>
-    <br>
-    <div>
-        <button id="createSendTransport">4. Create Send Transport</button>
-        <button id="connectSendTransportProduce">5. Connect Send Transport Produce</button>
-        <button id="createRecevTransport">6. Create Recev Transport</button>
-        <button id="connectRecevTransportConsume">7. Connect Recev Transport Consume</button>
-
+        <video controls autoplay id="remoteVideo"></video>
+        <div>
+            <button id="connectRecevSendTransportConsume">Consume</button>
+        </div>
     </div>
 </div>
+
 <script type="module" src="./bundle.js"></script>
 </body>
 </html>
