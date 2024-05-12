@@ -12,8 +12,8 @@ let remoteVideo = document.querySelector("#remoteVideo");
 
 const socket = io("/mediasoup");
 
-socket.on("connection-success", ({socketId,existsProducer}) => {
-    console.log(socketId,existsProducer);
+socket.on("connection-success", ({socketId, existsProducer}) => {
+    console.log(socketId, existsProducer);
 });
 
 let device;
@@ -50,7 +50,7 @@ let params = {
 }
 
 
-const streamSuccess =  (stream) => {
+const streamSuccess = (stream) => {
 
     localVideo.srcObject = stream;
     const track = stream.getVideoTracks()[0];
@@ -88,17 +88,17 @@ const getLocalStream = async () => {
         });
 }
 
-const goConsume = ()=>{
+const goConsume = () => {
     goConnect(false);
 }
 
-const goConnect = (producerOrConsumer)=>{
+const goConnect = (producerOrConsumer) => {
     isProducer = producerOrConsumer;
-    getRPTCapabilities();
+    device === undefined ? getRPTCapabilities() : goCreateTransport();
 }
 
-const goCreateTransport = ()=>{
-    isProducer ? createSendTransport():createRecevTransport();
+const goCreateTransport = () => {
+    isProducer ? createSendTransport() : createRecevTransport();
 }
 
 //CREATE DEVICE
@@ -124,9 +124,15 @@ const createDevice = async () => {
 
 const getRPTCapabilities = () => {
     //todo: event was changed from getRPTCapabilities to createRoom
+
+    // make a request to the server for Router RTP Capabilities
+    /// See server's socket.on("getRtpCapabilities"...,)
+    // the server sends back data object which contains rtpCapabilities
     socket.emit("createRoom", (data) => {
         console.log(`Router RTP Capabilities...${data.rtpCapabilities}`);
 
+    // we assign to local variable and will be used when
+        // loading the client Device (see createDevice above)
         rtpCapabilities = data.rtpCapabilities;
 
         // once we have the rtpCapabilities from the Router, create the device
@@ -219,7 +225,7 @@ const createRecevTransport = async () => {
         consumerTransport.on("connect", async ({dtlsParameters}, callback, errback) => {
             try {
                 // signal local DTLS parameters to the server side transport
-
+                // see server's socket.on("transport-recev-connect",...)
                 await socket.emit("transport-recv-connect", {
                     // transportId:consumerTransport.id,
                     dtlsParameters,
@@ -231,7 +237,8 @@ const createRecevTransport = async () => {
                 // tell the transport that something was wrong
                 errback(e);
             }
-        })
+        });
+        connectRecevSendTransportConsume();
     });
 }
 

@@ -73,7 +73,7 @@ const mediaCodecs = [
             "x-google-start-bitrate": 1000,
         }
     }
-]
+];
 
 peers.on("connection", async (socket) => {
     console.log(socket.id);
@@ -86,7 +86,7 @@ peers.on("connection", async (socket) => {
 
     socket.on("createRoom", async (callback) => {
         if (router === undefined) {
-            // worker.createRouter(options;
+            // worker.createRouter(options);
             // options = {mediaCodecs,appData};
             // mediaCodecs -> defined above
             // appData -> custom application data - we are not supplying any
@@ -100,7 +100,7 @@ peers.on("connection", async (socket) => {
     const getRtpCapabilities = (callback)=>{
         const rtpCapabilities = router.rtpCapabilities;
 
-        callback(rtpCapabilities);
+        callback({rtpCapabilities});
     }
 
     // // todo: i commented out the line below to check router details// plus the lines below were refactored
