@@ -1,0 +1,37 @@
+{
+  "name": "mediasoup-1-1",
+  "version": "1.0.0",
+  "description": "a full stack video conferencing",
+  "main": "app.js",
+  "scripts": {
+    "test": "nodemon app.js",
+    "start": "nodemon app.js",
+    "watch": "watchify public/index.js -o public/bundle.js -v"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/busingepius/mediasoup-1-1.git"
+  },
+  "keywords": [
+    "media",
+    "soup"
+  ],
+  "author": "businge pius",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/busingepius/mediasoup/issues"
+  },
+  "homepage": "https://github.com/busingepius/mediasoup-1-1#readme",
+  "dependencies": {
+    "express": "^4.19.2",
+    "httpolyglot": "^0.1.2",
+    "mediasoup": "^3.14.5",
+    "mediasoup-client": "^3.7.8",
+    "socket.io": "^4.7.5",
+    "socket.io-client": "^4.7.5",
+    "watchify": "^4.0.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.0"
+  }
+}
